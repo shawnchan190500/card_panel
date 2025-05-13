@@ -125,15 +125,64 @@
               @click="handleRowClick(item)"
             >
               <td v-if="visibleColumns.id">#{{ item.id }}</td>
+              <td v-if="visibleColumns.itemCode">
+                <input 
+                  type="text" 
+                  :value="item.itemCode || ''"
+                  @input="updateItemCode(item, $event.target.value)"
+                  @click.stop
+                  class="item-code-input"
+                  placeholder="Enter code"
+                />
+              </td>
               <td v-if="visibleColumns.cardNameJP">{{ item.cardNameJP }}</td>
               <td v-if="visibleColumns.cardNameCHI">{{ item.cardNameCHI }}</td>
-              <td v-if="visibleColumns.quantity">{{ item.quantity || 1 }}</td>
+              <td v-if="visibleColumns.quantity">
+                <input 
+                  type="number" 
+                  :value="item.quantity || 1"
+                  @input="updateQuantity(item, $event.target.value)"
+                  @click.stop
+                  class="quantity-input"
+                  min="1"
+                />
+              </td>
+              <td v-if="visibleColumns.sold">
+                <input 
+                  type="number" 
+                  v-model.number="item.sold" 
+                  @click.stop
+                  @input="updateSold(item)"
+                  class="sold-input"
+                  min="0"
+                />
+              </td>
               <td v-if="visibleColumns.buyPriceJPY" class="buy-price">{{ item.buyPrice }}</td>
               <td v-if="visibleColumns.buyPriceHKD" class="buy-price">{{ formatHKDPrice(item.buyPrice) }}</td>
-              <td v-if="visibleColumns.sellPriceJPY" class="sell-price">{{ item.sellPrice }}</td>
-              <td v-if="visibleColumns.sellPriceHKD" class="sell-price">{{ formatHKDPrice(item.sellPrice) }}</td>
+              <td v-if="visibleColumns.cost" class="cost">{{ calculateCost(item.buyPrice, item.quantity) }}</td>
+              <td v-if="visibleColumns.sellPriceJPY" class="sell-price">
+                <input 
+                  type="number" 
+                  v-model.number="item.sellPrice" 
+                  @click.stop
+                  @input="updateSellPrice(item)"
+                  class="sell-price-input"
+                  min="0"
+                />
+              </td>
+              <td v-if="visibleColumns.sellPriceHKD" class="sell-price">
+                <input 
+                  type="number" 
+                  :value="Math.round(item.sellPrice * 0.052)"
+                  @input="updateSellPriceHKD(item, $event.target.value)"
+                  @click.stop
+                  class="sell-price-input"
+                  min="0"
+                />
+              </td>
+              <td v-if="visibleColumns.totalProfit" class="total-profit">{{ calculateTotalProfit(item.buyPrice, item.sellPrice, item.sold) }}</td>
               <td v-if="visibleColumns.profitPercentage">{{ calculateProfitPercentage(item.buyPrice, item.sellPrice) }}</td>
-              <td v-if="visibleColumns.profit" class="profit">{{ calculateProfit(item.buyPrice, item.sellPrice, item.quantity) }}</td>
+              <td v-if="visibleColumns.profit" class="profit">{{ calculateProfit(item.buyPrice, item.sellPrice) }}</td>
               <td v-if="visibleColumns.createDate">{{ formatDate(item.createDate) }}</td>
               <td v-if="visibleColumns.image" class="image-cell">
                 <a 
@@ -149,8 +198,10 @@
             </tr>
           </tbody>
         </table>
-        <div class="total-profit">
-          Total Profit: <span class="profit-amount">HK$ {{ Math.round(totalProfit) }}</span>
+        <div class="table-footer">
+          <div class="total-profit">
+            Total Item Profit: <span class="profit-amount">HK$ {{ Math.round(totalProfit) }}</span>
+          </div>
         </div>
       </div>
       <div class="pagination" v-if="filteredData.length > 0">
@@ -237,7 +288,7 @@
               v-model="editForm.cardNameJP"
               type="text"
               class="form-input"
-            >
+              >
           </div>
           <div class="form-group">
             <label>Card Name (CHI)</label>
@@ -248,25 +299,27 @@
             >
             </div>
           <div class="form-group">
-            <label>Buying Price (JYP)</label>
+            <label>Buying Price (HKD)</label>
             <input 
-              v-model.number="editForm.buyPrice"
+              v-model.number="editForm.buyPriceHKD"
               type="number"
               class="form-input"
+              min="0"
             >
-            </div>
+          </div>
           <div class="form-group">
-            <label>Selling Price (JYP)</label>
+            <label>Selling Price (HKD)</label>
             <input 
-              v-model.number="editForm.sellPrice"
+              v-model.number="editForm.sellPriceHKD"
               type="number"
               class="form-input"
+              min="0"
             >
           </div>
           <div class="dialog-actions">
             <div class="dialog-actions-left">
               <button class="cancel-btn" @click="closeEditDialog">Cancel</button>
-              <button class="remove-btn" @click="removeItem(editingItem?.id)">Remove</button>
+              <button class="remove-btn" @click="handleRemove">Remove</button>
             </div>
             <button class="submit-btn" @click="handleEdit">Save Changes</button>
           </div>
@@ -322,12 +375,14 @@ const sortOrder = ref('desc')
 
 interface CardItem {
   id: string
+  itemCode: string
   cardNameJP: string
   cardNameCHI: string
   buyPrice: number
   sellPrice: number
   createDate: any
   quantity?: number
+  sold?: number
 }
 
 const allData = ref<CardItem[]>([])
@@ -427,31 +482,39 @@ const dateRange = ref({
 // Update column definitions
 const columns = {
   id: { label: 'ID', key: 'id' },
+  itemCode: { label: 'Item Code', key: 'itemCode' },
   cardNameJP: { label: 'Card Name (JP)', key: 'cardNameJP' },
   cardNameCHI: { label: 'Card Name (CHI)', key: 'cardNameCHI' },
-  quantity: { label: 'Number', key: 'quantity' },
+  quantity: { label: 'In Stock', key: 'quantity' },
+  sold: { label: 'Sold', key: 'sold' },
   buyPriceJPY: { label: 'Buying Price (JYP)', key: 'buyPriceJPY' },
   buyPriceHKD: { label: 'Buying Price (HKD)', key: 'buyPriceHKD' },
+  cost: { label: 'Cost (HKD)', key: 'cost' },
   sellPriceJPY: { label: 'Selling Price (JYP)', key: 'sellPriceJPY' },
   sellPriceHKD: { label: 'Selling Price (HKD)', key: 'sellPriceHKD' },
+  totalProfit: { label: 'Item Profit (HKD)', key: 'totalProfit' },
   profitPercentage: { label: 'Profit %', key: 'profitPercentage' },
   profit: { label: 'Profit (HKD)', key: 'profit' },
   createDate: { label: 'Create Date', key: 'createDate' },
   image: { label: 'Image', key: 'image' }
 }
 
-// Update visible columns to include image
+// Update visible columns
 const visibleColumns = ref({
   id: false,
-  cardNameJP: true,
-  cardNameCHI: false,
+  itemCode: true,
+  cardNameJP: false,
+  cardNameCHI: true,
   quantity: true,
+  sold: true,
   buyPriceJPY: false,
   buyPriceHKD: true,
+  cost: false,
   sellPriceJPY: false,
   sellPriceHKD: true,
+  totalProfit: true,
   profitPercentage: true,
-  profit: true,
+  profit: false,
   createDate: true,
   image: true
 })
@@ -579,10 +642,11 @@ const parseAndAddCards = async () => {
           cards.push(currentCard)
         }
         currentCard = {
-          createDate: serverTimestamp()
+          createDate: serverTimestamp(),
+          itemCode: '' // Initialize empty item code
         }
         currentCard.cardNameJP = lines[i + 1].trim()
-        currentCard.cardNameCHI = currentCard.cardNameJP // Use Japanese name for both fields
+        currentCard.cardNameCHI = currentCard.cardNameJP
         console.log('Card name:', currentCard.cardNameJP)
       } else if (line === '數量') {
         const quantity = parseInt(lines[i + 1].trim())
@@ -643,8 +707,8 @@ const editingItem = ref<CardItem | null>(null)
 const editForm = ref({
   cardNameJP: '',
   cardNameCHI: '',
-  buyPrice: 0,
-  sellPrice: 0
+  buyPriceHKD: 0,
+  sellPriceHKD: 0
 })
 
 // Add edit functions
@@ -653,8 +717,8 @@ const handleRowClick = (item: CardItem) => {
   editForm.value = {
     cardNameJP: item.cardNameJP,
     cardNameCHI: item.cardNameCHI,
-    buyPrice: item.buyPrice,
-    sellPrice: item.sellPrice
+    buyPriceHKD: Math.round(item.buyPrice * 0.052),
+    sellPriceHKD: Math.round(item.sellPrice * 0.052)
   }
   showEditDialog.value = true
 }
@@ -665,7 +729,10 @@ const handleEdit = async () => {
   try {
     const docRef = doc(db, 'cards', editingItem.value.id)
     await updateDoc(docRef, {
-      ...editForm.value,
+      cardNameJP: editForm.value.cardNameJP,
+      cardNameCHI: editForm.value.cardNameCHI,
+      buyPrice: convertHKDToJPY(editForm.value.buyPriceHKD),
+      sellPrice: convertHKDToJPY(editForm.value.sellPriceHKD),
       updateDate: serverTimestamp()
     })
     showEditDialog.value = false
@@ -719,15 +786,37 @@ const calculateProfitPercentage = (buyPrice: number, sellPrice: number): string 
   const buyHKD = buyPrice * 0.052
   const sellHKD = sellPrice * 0.052
   const profitPercentage = ((sellHKD - buyHKD) / buyHKD) * 100
-  return `${Math.round(profitPercentage)}%`
+  return `${Math.round(profitPercentage + 100)}%`
 }
 
-// Add profit calculation function
-const calculateProfit = (buyPrice: number, sellPrice: number, quantity: number = 1): string => {
+// Update profit calculation function
+const calculateProfit = (buyPrice: number, sellPrice: number): string => {
   const buyHKD = buyPrice * 0.052
   const sellHKD = sellPrice * 0.052
-  const profit = (sellHKD - buyHKD) * quantity
+  const profit = sellHKD - buyHKD
   return `HK$ ${Math.round(profit)}`
+}
+
+// Update total profit calculation
+const calculateTotalProfit = (buyPrice: number, sellPrice: number, sold: number = 0): string => {
+  const buyHKD = buyPrice * 0.052
+  const sellHKD = sellPrice * 0.052
+  const totalProfit = (sellHKD - buyHKD) * sold
+  return `HK$ ${Math.round(totalProfit)}`
+}
+
+// Add updateSellPrice function
+const updateSellPrice = async (item: CardItem) => {
+  try {
+    const docRef = doc(db, 'cards', item.id)
+    await updateDoc(docRef, {
+      sellPrice: item.sellPrice,
+      updateDate: serverTimestamp()
+    })
+  } catch (err) {
+    console.error('Error updating sell price:', err)
+    alert('Failed to update sell price. Please try again.')
+  }
 }
 
 // Add column filter functionality
@@ -773,8 +862,8 @@ const totalProfit = computed(() => {
   return allData.value.reduce((total, item) => {
     const buyHKD = item.buyPrice * 0.052
     const sellHKD = item.sellPrice * 0.052
-    const quantity = item.quantity || 1
-    return total + ((sellHKD - buyHKD) * quantity)
+    const sold = item.sold || 0
+    return total + ((sellHKD - buyHKD) * sold)
   }, 0)
 })
 
@@ -782,6 +871,91 @@ const totalProfit = computed(() => {
 const getGoogleSearchUrl = (cardName: string) => {
   const searchQuery = encodeURIComponent(`${cardName} ポケモンカード`)
   return `https://www.google.com/search?q=${searchQuery}&tbm=isch`
+}
+
+// Add new computed properties for cost and total profit
+const calculateCost = (buyPrice: number, quantity: number = 1): string => {
+  const buyHKD = buyPrice * 0.052
+  const cost = buyHKD * quantity
+  return `HK$ ${Math.round(cost)}`
+}
+
+// Add updateSold function
+const updateSold = async (item: CardItem) => {
+  try {
+    const docRef = doc(db, 'cards', item.id)
+    await updateDoc(docRef, {
+      sold: item.sold || 0,
+      updateDate: serverTimestamp()
+    })
+  } catch (err) {
+    console.error('Error updating sold quantity:', err)
+    alert('Failed to update sold quantity. Please try again.')
+  }
+}
+
+// Add HKD to JPY conversion function
+const convertHKDToJPY = (hkdPrice: number): number => {
+  return Math.round(hkdPrice / 0.052)
+}
+
+// Add updateSellPriceHKD function
+const updateSellPriceHKD = async (item: CardItem, hkdPrice: number) => {
+  try {
+    const docRef = doc(db, 'cards', item.id)
+    await updateDoc(docRef, {
+      sellPrice: convertHKDToJPY(hkdPrice),
+      updateDate: serverTimestamp()
+    })
+  } catch (err) {
+    console.error('Error updating sell price:', err)
+    alert('Failed to update sell price. Please try again.')
+  }
+}
+
+// Add updateQuantity function
+const updateQuantity = async (item: CardItem, quantity: number) => {
+  try {
+    const docRef = doc(db, 'cards', item.id)
+    await updateDoc(docRef, {
+      quantity: quantity,
+      updateDate: serverTimestamp()
+    })
+  } catch (err) {
+    console.error('Error updating quantity:', err)
+    alert('Failed to update quantity. Please try again.')
+  }
+}
+
+// Add updateItemCode function
+const updateItemCode = async (item: CardItem, code: string) => {
+  try {
+    const docRef = doc(db, 'cards', item.id)
+    await updateDoc(docRef, {
+      itemCode: code,
+      updateDate: serverTimestamp()
+    })
+  } catch (err) {
+    console.error('Error updating item code:', err)
+    alert('Failed to update item code. Please try again.')
+  }
+}
+
+// Add handleRemove function
+const handleRemove = async () => {
+  if (!editingItem.value) return
+  
+  if (confirm('Are you sure you want to remove this item?')) {
+    try {
+      const docRef = doc(db, 'cards', editingItem.value.id)
+      await deleteDoc(docRef)
+      showEditDialog.value = false
+      editingItem.value = null
+    } catch (err) {
+      console.error('Error removing item:', err)
+      alert('Failed to remove item. Please try again.')
+    }
+  }
 }
 </script>
 
@@ -838,6 +1012,8 @@ const getGoogleSearchUrl = (cardName: string) => {
   border-radius: 8px;
   border: 1px solid #e5e7eb;
   margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
 }
 
 .data-table {
@@ -1027,12 +1203,12 @@ const getGoogleSearchUrl = (cardName: string) => {
   border: none;
   border-radius: 4px;
   cursor: pointer;
-}
-
+  }
+  
 .retry-btn:hover {
   background: #b91c1c;
-}
-
+  }
+  
 .no-data {
   text-align: center;
   padding: 2rem;
@@ -1419,12 +1595,8 @@ const getGoogleSearchUrl = (cardName: string) => {
 }
 
 .total-profit {
-  padding: 1rem;
-  background-color: #f8fafc;
-  border-top: 1px solid #e5e7eb;
-  text-align: right;
-  font-size: 1.1rem;
-  font-weight: 500;
+  color: #16a34a;
+  font-weight: 600;
 }
 
 .profit-amount {
@@ -1449,5 +1621,93 @@ const getGoogleSearchUrl = (cardName: string) => {
 
 .image-link:hover {
   color: #1d4ed8;
+}
+
+.sold-input {
+  width: 80px;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  text-align: right;
+}
+
+.sold-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
+.cost {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.sell-price-input {
+  width: 80px;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  text-align: right;
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.sell-price-input:focus {
+  outline: none;
+  border-color: #16a34a;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.1);
+}
+
+.quantity-input {
+  width: 60px;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  text-align: right;
+}
+
+.quantity-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
+.item-code-input {
+  width: 100px;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.item-code-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
+.table-footer {
+  padding: 1rem;
+  background-color: #f8fafc;
+  border-top: 1px solid #e5e7eb;
+  text-align: right;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+}
+
+.total-profit {
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.profit-amount {
+  color: #16a34a;
+  font-weight: 700;
+  font-size: 1.2rem;
+  margin-left: 0.5rem;
 }
 </style> 

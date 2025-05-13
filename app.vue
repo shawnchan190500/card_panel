@@ -1,7 +1,7 @@
 <template>
   <Layout @search="handleSearch">
     <template #default="{ searchQuery }">
-      <Panel title="Card Panel" :searchQuery="searchQuery" />
+      <Panel title="" :searchQuery="searchQuery" />
     </template>
   </Layout>
 </template>
