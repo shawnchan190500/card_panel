@@ -198,8 +198,8 @@
             </tr>
           </tbody>
         </table>
-        <div class="table-footer">
-          <div class="total-profit">
+        <div class="total-profit-container">
+          <div class="total-profit-text">
             Total Item Profit: <span class="profit-amount">HK$ {{ Math.round(totalProfit) }}</span>
           </div>
         </div>
@@ -288,7 +288,7 @@
               v-model="editForm.cardNameJP"
               type="text"
               class="form-input"
-              >
+            >
           </div>
           <div class="form-group">
             <label>Card Name (CHI)</label>
@@ -299,12 +299,33 @@
             >
             </div>
           <div class="form-group">
+            <label>Buying Price (JPY)</label>
+            <input 
+              v-model.number="editForm.buyPriceJPY"
+              type="number"
+              class="form-input"
+              min="0"
+              @input="syncBuyPrice('JPY', $event.target.value)"
+            >
+          </div>
+          <div class="form-group">
             <label>Buying Price (HKD)</label>
             <input 
               v-model.number="editForm.buyPriceHKD"
               type="number"
               class="form-input"
               min="0"
+              @input="syncBuyPrice('HKD', $event.target.value)"
+            >
+          </div>
+          <div class="form-group">
+            <label>Selling Price (JPY)</label>
+            <input 
+              v-model.number="editForm.sellPriceJPY"
+              type="number"
+              class="form-input"
+              min="0"
+              @input="syncSellPrice('JPY', $event.target.value)"
             >
           </div>
           <div class="form-group">
@@ -314,6 +335,7 @@
               type="number"
               class="form-input"
               min="0"
+              @input="syncSellPrice('HKD', $event.target.value)"
             >
           </div>
           <div class="dialog-actions">
@@ -606,14 +628,12 @@ watch(() => props.searchQuery, () => {
 })
 
 const removeItem = async (id: string) => {
-  if (confirm('Are you sure you want to remove this item?')) {
-    try {
-      // Delete the document from Firestore
-      await deleteDoc(doc(db, 'cards', id))
-    } catch (err) {
-      console.error('Error removing item:', err)
-      alert('Failed to remove item. Please try again.')
-    }
+  try {
+    // Delete the document from Firestore
+    await deleteDoc(doc(db, 'cards', id))
+  } catch (err) {
+    console.error('Error removing item:', err)
+    throw new Error('Failed to remove item')
   }
 }
 
@@ -707,7 +727,9 @@ const editingItem = ref<CardItem | null>(null)
 const editForm = ref({
   cardNameJP: '',
   cardNameCHI: '',
+  buyPriceJPY: 0,
   buyPriceHKD: 0,
+  sellPriceJPY: 0,
   sellPriceHKD: 0
 })
 
@@ -717,7 +739,9 @@ const handleRowClick = (item: CardItem) => {
   editForm.value = {
     cardNameJP: item.cardNameJP,
     cardNameCHI: item.cardNameCHI,
+    buyPriceJPY: item.buyPrice,
     buyPriceHKD: Math.round(item.buyPrice * 0.052),
+    sellPriceJPY: item.sellPrice,
     sellPriceHKD: Math.round(item.sellPrice * 0.052)
   }
   showEditDialog.value = true
@@ -731,8 +755,8 @@ const handleEdit = async () => {
     await updateDoc(docRef, {
       cardNameJP: editForm.value.cardNameJP,
       cardNameCHI: editForm.value.cardNameCHI,
-      buyPrice: convertHKDToJPY(editForm.value.buyPriceHKD),
-      sellPrice: convertHKDToJPY(editForm.value.sellPriceHKD),
+      buyPrice: editForm.value.buyPriceJPY,
+      sellPrice: editForm.value.sellPriceJPY,
       updateDate: serverTimestamp()
     })
     showEditDialog.value = false
@@ -945,16 +969,33 @@ const updateItemCode = async (item: CardItem, code: string) => {
 const handleRemove = async () => {
   if (!editingItem.value) return
   
-  if (confirm('Are you sure you want to remove this item?')) {
-    try {
-      const docRef = doc(db, 'cards', editingItem.value.id)
-      await deleteDoc(docRef)
-      showEditDialog.value = false
-      editingItem.value = null
-    } catch (err) {
-      console.error('Error removing item:', err)
-      alert('Failed to remove item. Please try again.')
-    }
+  try {
+    await removeItem(editingItem.value.id)
+    closeEditDialog()
+  } catch (err) {
+    console.error('Error removing item:', err)
+    alert('Failed to remove item. Please try again.')
+  }
+}
+
+// Add price sync functions
+const syncBuyPrice = (currency: 'JPY' | 'HKD', value: number) => {
+  if (currency === 'JPY') {
+    editForm.value.buyPriceJPY = value
+    editForm.value.buyPriceHKD = Math.round(value * 0.052)
+  } else {
+    editForm.value.buyPriceHKD = value
+    editForm.value.buyPriceJPY = Math.round(value / 0.052)
+  }
+}
+
+const syncSellPrice = (currency: 'JPY' | 'HKD', value: number) => {
+  if (currency === 'JPY') {
+    editForm.value.sellPriceJPY = value
+    editForm.value.sellPriceHKD = Math.round(value * 0.052)
+  } else {
+    editForm.value.sellPriceHKD = value
+    editForm.value.sellPriceJPY = Math.round(value / 0.052)
   }
 }
 </script>
@@ -1012,8 +1053,6 @@ const handleRemove = async () => {
   border-radius: 8px;
   border: 1px solid #e5e7eb;
   margin-bottom: 1rem;
-  display: flex;
-  flex-direction: column;
 }
 
 .data-table {
@@ -1689,25 +1728,16 @@ const handleRemove = async () => {
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
 }
 
-.table-footer {
+.total-profit-container {
+  display: flex;
+  justify-content: flex-end;
   padding: 1rem;
   background-color: #f8fafc;
   border-top: 1px solid #e5e7eb;
-  text-align: right;
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
 }
 
-.total-profit {
+.total-profit-text {
   font-size: 1.1rem;
   font-weight: 500;
-}
-
-.profit-amount {
-  color: #16a34a;
-  font-weight: 700;
-  font-size: 1.2rem;
-  margin-left: 0.5rem;
 }
 </style> 
