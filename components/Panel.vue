@@ -11,7 +11,7 @@
     
     <div v-else-if="error" class="error-message">
       {{ error }}
-      <button @click="window.location.reload()" class="retry-btn">Retry</button>
+      <button @click="reloadPage" class="retry-btn">Retry</button>
     </div>
 
     <div class="panel-header">
@@ -39,6 +39,13 @@
             </button>
             <button class="remove-all-btn" @click="showRemoveAllDialog">
               Remove All
+            </button>
+            <button 
+              class="update-price-btn" 
+              @click="updateSellingPrices"
+              title="Update selling prices: $4 → $9 and $9 → $20 for records after 23/05/2025"
+            >
+              Update Prices
             </button>
             <div class="column-filter-container">
               <button class="column-filter-btn" @click="toggleColumnFilter">
@@ -122,6 +129,10 @@
               v-for="item in paginatedData" 
               :key="item.id" 
               class="table-row"
+              :class="{ 
+                'keep-row': item.keep,
+                'sold-out-row': item.quantity === item.sold && item.quantity !== undefined && item.sold !== undefined
+              }"
               @click="handleRowClick(item)"
             >
               <td v-if="visibleColumns.id">#{{ item.id }}</td>
@@ -129,9 +140,13 @@
                 <input 
                   type="text" 
                   :value="item.itemCode || ''"
-                  @input="updateItemCode(item, $event.target.value)"
+                  @input="(e: Event) => {
+                    const target = e.target as HTMLInputElement;
+                    updateItemCode(item, target?.value ?? '');
+                  }"
                   @click.stop
                   class="item-code-input"
+                  :disabled="item.keep"
                   placeholder="Enter code"
                 />
               </td>
@@ -141,9 +156,13 @@
                 <input 
                   type="number" 
                   :value="item.quantity || 1"
-                  @input="updateQuantity(item, $event.target.value)"
+                  @input="(e: Event) => {
+                    const target = e.target as HTMLInputElement;
+                    updateQuantity(item, Number(target?.value ?? 1));
+                  }"
                   @click.stop
                   class="quantity-input"
+                  :disabled="item.keep"
                   min="1"
                 />
               </td>
@@ -154,6 +173,7 @@
                   @click.stop
                   @input="updateSold(item)"
                   class="sold-input"
+                  :disabled="item.keep"
                   min="0"
                 />
               </td>
@@ -167,16 +187,21 @@
                   @click.stop
                   @input="updateSellPrice(item)"
                   class="sell-price-input"
+                  :disabled="item.keep"
                   min="0"
                 />
               </td>
-              <td v-if="visibleColumns.sellPriceHKD" class="sell-price">
+              <td v-if="visibleColumns.sellPriceHKD">
                 <input 
                   type="number" 
                   :value="Math.round(item.sellPrice * 0.052)"
-                  @input="updateSellPriceHKD(item, $event.target.value)"
+                  @input="(e: Event) => {
+                    const target = e.target as HTMLInputElement;
+                    updateSellPriceHKD(item, Number(target?.value ?? 0));
+                  }"
                   @click.stop
                   class="sell-price-input"
+                  :disabled="item.keep"
                   min="0"
                 />
               </td>
@@ -194,6 +219,30 @@
                 >
                   🖼️
                 </a>
+              </td>
+              <td v-if="visibleColumns.keep" class="keep-cell">
+                <input 
+                  type="checkbox" 
+                  :checked="item.keep"
+                  @change="(e: Event) => {
+                    const target = e.target as HTMLInputElement;
+                    updateKeep(item, target?.checked ?? false);
+                  }"
+                  @click.stop
+                  class="keep-checkbox"
+                />
+              </td>
+              <td v-if="visibleColumns.stockTake" class="stock-take-cell">
+                <input 
+                  type="checkbox" 
+                  :checked="item.stockTake"
+                  @change="(e: Event) => {
+                    const target = e.target as HTMLInputElement;
+                    updateStockTake(item, target?.checked ?? false);
+                  }"
+                  @click.stop
+                  class="stock-take-checkbox"
+                />
               </td>
             </tr>
           </tbody>
@@ -341,7 +390,7 @@
           <div class="dialog-actions">
             <div class="dialog-actions-left">
               <button class="cancel-btn" @click="closeEditDialog">Cancel</button>
-              <button class="remove-btn" @click="handleRemove">Remove</button>
+              <button class="remove-btn" @click="handleRemoveAll">Remove</button>
             </div>
             <button class="submit-btn" @click="handleEdit">Save Changes</button>
           </div>
@@ -382,7 +431,8 @@ import {
   orderBy,
   updateDoc,
   serverTimestamp,
-  writeBatch
+  writeBatch,
+  Firestore
 } from 'firebase/firestore'
 
 const props = defineProps<{
@@ -405,6 +455,9 @@ interface CardItem {
   createDate: any
   quantity?: number
   sold?: number
+  keep?: boolean
+  stockTake?: boolean
+  [key: string]: any // Add index signature
 }
 
 const allData = ref<CardItem[]>([])
@@ -448,9 +501,10 @@ onMounted(async () => {
       console.log('Cleaning up Firestore listener...')
       unsubscribe()
     })
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Error setting up Firestore connection:', err)
-    error.value = 'Failed to set up data connection: ' + err.message
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    error.value = 'Failed to set up data connection: ' + errorMessage
     loading.value = false
   }
 })
@@ -518,11 +572,17 @@ const columns = {
   profitPercentage: { label: 'Profit %', key: 'profitPercentage' },
   profit: { label: 'Profit (HKD)', key: 'profit' },
   createDate: { label: 'Create Date', key: 'createDate' },
-  image: { label: 'Image', key: 'image' }
+  image: { label: 'Image', key: 'image' },
+  keep: { label: 'Keep', key: 'keep' },
+  stockTake: { label: 'Stock Take', key: 'stockTake' }
 }
 
-// Update visible columns
-const visibleColumns = ref({
+interface VisibleColumns {
+  [key: string]: boolean
+}
+
+// Update visible columns type
+const visibleColumns = ref<VisibleColumns>({
   id: false,
   itemCode: true,
   cardNameJP: false,
@@ -538,7 +598,9 @@ const visibleColumns = ref({
   profitPercentage: true,
   profit: false,
   createDate: true,
-  image: true
+  image: true,
+  keep: true,
+  stockTake: true
 })
 
 // Add date range filter function
@@ -629,11 +691,11 @@ watch(() => props.searchQuery, () => {
 
 const removeItem = async (id: string) => {
   try {
-    // Delete the document from Firestore
-    await deleteDoc(doc(db, 'cards', id))
-  } catch (err) {
+    await deleteDoc(doc(db!, 'cards', id))
+  } catch (err: unknown) {
     console.error('Error removing item:', err)
-    throw new Error('Failed to remove item')
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    throw new Error('Failed to remove item: ' + errorMessage)
   }
 }
 
@@ -710,14 +772,15 @@ const parseAndAddCards = async () => {
     // Add all cards to Firestore
     for (const card of cards) {
       console.log('Adding card to Firestore:', card)
-      await addDoc(collection(db, 'cards'), card)
+      await addDoc(collection(db!, 'cards'), card)
     }
     
     console.log('All cards added successfully')
     closeDialog()
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Error in parseAndAddCards:', err)
-    alert('Failed to add cards: ' + (err instanceof Error ? err.message : 'Unknown error'))
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to add cards: ' + errorMessage)
   }
 }
 
@@ -751,7 +814,7 @@ const handleEdit = async () => {
   if (!editingItem.value) return
 
   try {
-    const docRef = doc(db, 'cards', editingItem.value.id)
+    const docRef = doc(db!, 'cards', editingItem.value.id)
     await updateDoc(docRef, {
       cardNameJP: editForm.value.cardNameJP,
       cardNameCHI: editForm.value.cardNameCHI,
@@ -761,9 +824,10 @@ const handleEdit = async () => {
     })
     showEditDialog.value = false
     editingItem.value = null
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Error updating card:', err)
-    alert('Failed to update card. Please try again.')
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to update card: ' + errorMessage)
   }
 }
 
@@ -792,16 +856,17 @@ const closeRemoveAllDialog = () => {
 
 const handleRemoveAll = async () => {
   try {
-    const batch = writeBatch(db)
+    const batch = writeBatch(db!)
     allData.value.forEach(item => {
-      const docRef = doc(db, 'cards', item.id)
+      const docRef = doc(db!, 'cards', item.id)
       batch.delete(docRef)
     })
     await batch.commit()
     closeRemoveAllDialog()
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Error removing all items:', err)
-    alert('Failed to remove all items. Please try again.')
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to remove all items: ' + errorMessage)
   }
 }
 
@@ -832,14 +897,15 @@ const calculateTotalProfit = (buyPrice: number, sellPrice: number, sold: number 
 // Add updateSellPrice function
 const updateSellPrice = async (item: CardItem) => {
   try {
-    const docRef = doc(db, 'cards', item.id)
+    const docRef = doc(db!, 'cards', item.id)
     await updateDoc(docRef, {
       sellPrice: item.sellPrice,
       updateDate: serverTimestamp()
     })
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Error updating sell price:', err)
-    alert('Failed to update sell price. Please try again.')
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to update sell price: ' + errorMessage)
   }
 }
 
@@ -907,14 +973,15 @@ const calculateCost = (buyPrice: number, quantity: number = 1): string => {
 // Add updateSold function
 const updateSold = async (item: CardItem) => {
   try {
-    const docRef = doc(db, 'cards', item.id)
+    const docRef = doc(db!, 'cards', item.id)
     await updateDoc(docRef, {
       sold: item.sold || 0,
       updateDate: serverTimestamp()
     })
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Error updating sold quantity:', err)
-    alert('Failed to update sold quantity. Please try again.')
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to update sold quantity: ' + errorMessage)
   }
 }
 
@@ -923,58 +990,46 @@ const convertHKDToJPY = (hkdPrice: number): number => {
   return Math.round(hkdPrice / 0.052)
 }
 
-// Add updateSellPriceHKD function
-const updateSellPriceHKD = async (item: CardItem, hkdPrice: number) => {
+// Update event handlers to accept primitive values
+const updateItemCode = async (item: CardItem, value: string) => {
   try {
-    const docRef = doc(db, 'cards', item.id)
+    const docRef = doc(db!, 'cards', item.id)
     await updateDoc(docRef, {
-      sellPrice: convertHKDToJPY(hkdPrice),
+      itemCode: value,
       updateDate: serverTimestamp()
     })
-  } catch (err) {
-    console.error('Error updating sell price:', err)
-    alert('Failed to update sell price. Please try again.')
-  }
-}
-
-// Add updateQuantity function
-const updateQuantity = async (item: CardItem, quantity: number) => {
-  try {
-    const docRef = doc(db, 'cards', item.id)
-    await updateDoc(docRef, {
-      quantity: quantity,
-      updateDate: serverTimestamp()
-    })
-  } catch (err) {
-    console.error('Error updating quantity:', err)
-    alert('Failed to update quantity. Please try again.')
-  }
-}
-
-// Add updateItemCode function
-const updateItemCode = async (item: CardItem, code: string) => {
-  try {
-    const docRef = doc(db, 'cards', item.id)
-    await updateDoc(docRef, {
-      itemCode: code,
-      updateDate: serverTimestamp()
-    })
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Error updating item code:', err)
-    alert('Failed to update item code. Please try again.')
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to update item code: ' + errorMessage)
   }
 }
 
-// Add handleRemove function
-const handleRemove = async () => {
-  if (!editingItem.value) return
-  
+const updateQuantity = async (item: CardItem, value: number) => {
   try {
-    await removeItem(editingItem.value.id)
-    closeEditDialog()
-  } catch (err) {
-    console.error('Error removing item:', err)
-    alert('Failed to remove item. Please try again.')
+    const docRef = doc(db!, 'cards', item.id)
+    await updateDoc(docRef, {
+      quantity: value,
+      updateDate: serverTimestamp()
+    })
+  } catch (err: unknown) {
+    console.error('Error updating quantity:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to update quantity: ' + errorMessage)
+  }
+}
+
+const updateSellPriceHKD = async (item: CardItem, value: number) => {
+  try {
+    const docRef = doc(db!, 'cards', item.id)
+    await updateDoc(docRef, {
+      sellPrice: convertHKDToJPY(value),
+      updateDate: serverTimestamp()
+    })
+  } catch (err: unknown) {
+    console.error('Error updating sell price:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to update sell price: ' + errorMessage)
   }
 }
 
@@ -996,6 +1051,121 @@ const syncSellPrice = (currency: 'JPY' | 'HKD', value: number) => {
   } else {
     editForm.value.sellPriceHKD = value
     editForm.value.sellPriceJPY = Math.round(value / 0.052)
+  }
+}
+
+// Add updateKeep function
+const updateKeep = async (item: CardItem, keep: boolean) => {
+  try {
+    const docRef = doc(db!, 'cards', item.id)
+    await updateDoc(docRef, {
+      keep: keep,
+      updateDate: serverTimestamp()
+    })
+  } catch (err: unknown) {
+    console.error('Error updating keep status:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to update keep status: ' + errorMessage)
+  }
+}
+
+// Add reloadPage function
+const reloadPage = () => {
+  if (typeof window !== 'undefined') {
+    window.location.reload()
+  }
+}
+
+// Add type for input event
+type InputEventWithTarget = {
+  target: HTMLInputElement;
+} & Event;
+
+// Add handleRemove function
+const handleRemove = async () => {
+  if (!editingItem.value) return
+  
+  try {
+    await removeItem(editingItem.value.id)
+    closeEditDialog()
+  } catch (err: unknown) {
+    console.error('Error removing item:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to remove item: ' + errorMessage)
+  }
+}
+
+// Add updateStockTake function
+const updateStockTake = async (item: CardItem, stockTake: boolean) => {
+  try {
+    const docRef = doc(db!, 'cards', item.id)
+    await updateDoc(docRef, {
+      stockTake: stockTake,
+      updateDate: serverTimestamp()
+    })
+  } catch (err: unknown) {
+    console.error('Error updating stock take status:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to update stock take status: ' + errorMessage)
+  }
+}
+
+// Update updateSellingPrices function
+const updateSellingPrices = async () => {
+  try {
+    const targetDate = new Date('2025-05-23')
+    const batch = writeBatch(db!)
+    let updateCount4to9 = 0
+    let updateCount9to20 = 0
+
+    // Filter records that meet the criteria
+    const recordsToUpdate = allData.value.filter(item => {
+      const createDate = item.createDate.toDate()
+      const buyPriceHKD = Math.round(item.buyPrice * 0.052)
+      return createDate >= targetDate && (buyPriceHKD === 4 || buyPriceHKD === 9)
+    })
+
+    // Update each matching record
+    for (const item of recordsToUpdate) {
+      const docRef = doc(db!, 'cards', item.id)
+      const buyPriceHKD = Math.round(item.buyPrice * 0.052)
+      let newSellPriceJPY: number
+
+      if (buyPriceHKD === 4) {
+        // Convert HKD 9 to JPY (approximately 173 JPY)
+        newSellPriceJPY = Math.round(9 / 0.052)
+        updateCount4to9++
+      } else if (buyPriceHKD === 9) {
+        // Convert HKD 20 to JPY (approximately 385 JPY)
+        newSellPriceJPY = Math.round(20 / 0.052)
+        updateCount9to20++
+      } else {
+        continue
+      }
+
+      batch.update(docRef, {
+        sellPrice: newSellPriceJPY,
+        updateDate: serverTimestamp()
+      })
+    }
+
+    if (updateCount4to9 > 0 || updateCount9to20 > 0) {
+      await batch.commit()
+      let message = 'Successfully updated:'
+      if (updateCount4to9 > 0) {
+        message += `\n- ${updateCount4to9} records from $4 to $9`
+      }
+      if (updateCount9to20 > 0) {
+        message += `\n- ${updateCount9to20} records from $9 to $20`
+      }
+      alert(message)
+    } else {
+      alert('No records found matching the criteria.')
+    }
+  } catch (err: unknown) {
+    console.error('Error updating selling prices:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to update selling prices: ' + errorMessage)
   }
 }
 </script>
@@ -1090,6 +1260,31 @@ const syncSellPrice = (currency: 'JPY' | 'HKD', value: number) => {
 
 .table-row:hover {
   background-color: #f3f4f6;
+}
+
+.keep-row {
+  background-color: #e0f2fe !important; /* Light blue background */
+}
+
+.keep-row:hover {
+  background-color: #bae6fd !important; /* Slightly darker blue on hover */
+}
+
+.sold-out-row {
+  background-color: #fee2e2 !important; /* Light red background */
+}
+
+.sold-out-row:hover {
+  background-color: #fecaca !important; /* Slightly darker red on hover */
+}
+
+/* When both keep and sold-out conditions are true, keep takes precedence */
+.keep-row.sold-out-row {
+  background-color: #e0f2fe !important;
+}
+
+.keep-row.sold-out-row:hover {
+  background-color: #bae6fd !important;
 }
 
 .sortable {
@@ -1739,5 +1934,67 @@ const syncSellPrice = (currency: 'JPY' | 'HKD', value: number) => {
 .total-profit-text {
   font-size: 1.1rem;
   font-weight: 500;
+}
+
+.keep-cell {
+  text-align: center;
+  padding: 0.5rem;
+}
+
+.keep-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: #2563eb;
+}
+
+.keep-checkbox:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+/* Add styles for disabled inputs */
+.item-code-input:disabled,
+.quantity-input:disabled,
+.sold-input:disabled,
+.sell-price-input:disabled {
+  background-color: #f3f4f6;
+  cursor: not-allowed;
+  opacity: 0.7;
+  border-color: #d1d5db;
+}
+
+.stock-take-cell {
+  text-align: center;
+  padding: 0.5rem;
+}
+
+.stock-take-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: #16a34a; /* Green color for stock take checkbox */
+}
+
+.stock-take-checkbox:focus {
+  outline: 2px solid #16a34a;
+  outline-offset: 2px;
+}
+
+.update-price-btn {
+  padding: 0.5rem 1.25rem;
+  background-color: #16a34a;
+  color: white;
+  border: none;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-right: 1rem;
+}
+
+.update-price-btn:hover {
+  background-color: #15803d;
 }
 </style> 
