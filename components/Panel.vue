@@ -43,9 +43,16 @@
             <button 
               class="update-price-btn" 
               @click="updateSellingPrices"
-              title="Update selling prices: $4 → $9 and $9 → $20 for records after 23/05/2025"
+              title="Update selling prices: $1 → $8, $2 → $8, $3 → $8, $4 → $10, $5 → $12, $6 → $16, $7 → $16, $8 → $18, $9 → $22, $10 → $24, $11 → $26, $12 → $28 for records after 23/05/2025"
             >
               Update Prices
+            </button>
+            <button 
+              class="export-btn" 
+              @click="exportToExcel"
+              title="Export data to Excel"
+            >
+              Export to Excel
             </button>
             <div class="column-filter-container">
               <button class="column-filter-btn" @click="toggleColumnFilter">
@@ -131,7 +138,8 @@
               class="table-row"
               :class="{ 
                 'keep-row': item.keep,
-                'sold-out-row': item.quantity === item.sold && item.quantity !== undefined && item.sold !== undefined
+                'sold-out-row': item.quantity === item.sold && item.quantity !== undefined && item.sold !== undefined,
+                'out-of-range-row': isPriceOutOfRange(item.buyPrice)
               }"
               @click="handleRowClick(item)"
             >
@@ -434,6 +442,7 @@ import {
   writeBatch,
   Firestore
 } from 'firebase/firestore'
+import * as XLSX from 'xlsx'
 
 const props = defineProps<{
   title?: string,
@@ -1115,14 +1124,26 @@ const updateSellingPrices = async () => {
   try {
     const targetDate = new Date('2025-05-23')
     const batch = writeBatch(db!)
-    let updateCount4to9 = 0
-    let updateCount9to20 = 0
+    const updateCounts = {
+      '1to8': 0,
+      '2to8': 0,
+      '3to8': 0,
+      '4to10': 0,
+      '5to12': 0,
+      '6to16': 0,
+      '7to16': 0,
+      '8to18': 0,
+      '9to22': 0,
+      '10to24': 0,
+      '11to26': 0,
+      '12to28': 0
+    }
 
     // Filter records that meet the criteria
     const recordsToUpdate = allData.value.filter(item => {
       const createDate = item.createDate.toDate()
       const buyPriceHKD = Math.round(item.buyPrice * 0.052)
-      return createDate >= targetDate && (buyPriceHKD === 4 || buyPriceHKD === 9)
+      return createDate >= targetDate && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(buyPriceHKD)
     })
 
     // Update each matching record
@@ -1131,16 +1152,57 @@ const updateSellingPrices = async () => {
       const buyPriceHKD = Math.round(item.buyPrice * 0.052)
       let newSellPriceJPY: number
 
-      if (buyPriceHKD === 4) {
-        // Convert HKD 9 to JPY (approximately 173 JPY)
-        newSellPriceJPY = Math.round(9 / 0.052)
-        updateCount4to9++
-      } else if (buyPriceHKD === 9) {
-        // Convert HKD 20 to JPY (approximately 385 JPY)
-        newSellPriceJPY = Math.round(20 / 0.052)
-        updateCount9to20++
-      } else {
-        continue
+      switch (buyPriceHKD) {
+        case 1:
+          newSellPriceJPY = Math.round(8 / 0.052)
+          updateCounts['1to8']++
+          break
+        case 2:
+          newSellPriceJPY = Math.round(8 / 0.052)
+          updateCounts['2to8']++
+          break
+        case 3:
+          newSellPriceJPY = Math.round(8 / 0.052)
+          updateCounts['3to8']++
+          break
+        case 4:
+          newSellPriceJPY = Math.round(10 / 0.052)
+          updateCounts['4to10']++
+          break
+        case 5:
+          newSellPriceJPY = Math.round(12 / 0.052)
+          updateCounts['5to12']++
+          break
+        case 6:
+          newSellPriceJPY = Math.round(16 / 0.052)
+          updateCounts['6to16']++
+          break
+        case 7:
+          newSellPriceJPY = Math.round(16 / 0.052)
+          updateCounts['7to16']++
+          break
+        case 8:
+          newSellPriceJPY = Math.round(18 / 0.052)
+          updateCounts['8to18']++
+          break
+        case 9:
+          newSellPriceJPY = Math.round(22 / 0.052)
+          updateCounts['9to22']++
+          break
+        case 10:
+          newSellPriceJPY = Math.round(24 / 0.052)
+          updateCounts['10to24']++
+          break
+        case 11:
+          newSellPriceJPY = Math.round(26 / 0.052)
+          updateCounts['11to26']++
+          break
+        case 12:
+          newSellPriceJPY = Math.round(28 / 0.052)
+          updateCounts['12to28']++
+          break
+        default:
+          continue
       }
 
       batch.update(docRef, {
@@ -1149,15 +1211,22 @@ const updateSellingPrices = async () => {
       })
     }
 
-    if (updateCount4to9 > 0 || updateCount9to20 > 0) {
+    const hasUpdates = Object.values(updateCounts).some(count => count > 0)
+    if (hasUpdates) {
       await batch.commit()
       let message = 'Successfully updated:'
-      if (updateCount4to9 > 0) {
-        message += `\n- ${updateCount4to9} records from $4 to $9`
-      }
-      if (updateCount9to20 > 0) {
-        message += `\n- ${updateCount9to20} records from $9 to $20`
-      }
+      if (updateCounts['1to8'] > 0) message += `\n- ${updateCounts['1to8']} records from $1 to $8`
+      if (updateCounts['2to8'] > 0) message += `\n- ${updateCounts['2to8']} records from $2 to $8`
+      if (updateCounts['3to8'] > 0) message += `\n- ${updateCounts['3to8']} records from $3 to $8`
+      if (updateCounts['4to10'] > 0) message += `\n- ${updateCounts['4to10']} records from $4 to $10`
+      if (updateCounts['5to12'] > 0) message += `\n- ${updateCounts['5to12']} records from $5 to $12`
+      if (updateCounts['6to16'] > 0) message += `\n- ${updateCounts['6to16']} records from $6 to $16`
+      if (updateCounts['7to16'] > 0) message += `\n- ${updateCounts['7to16']} records from $7 to $16`
+      if (updateCounts['8to18'] > 0) message += `\n- ${updateCounts['8to18']} records from $8 to $18`
+      if (updateCounts['9to22'] > 0) message += `\n- ${updateCounts['9to22']} records from $9 to $22`
+      if (updateCounts['10to24'] > 0) message += `\n- ${updateCounts['10to24']} records from $10 to $24`
+      if (updateCounts['11to26'] > 0) message += `\n- ${updateCounts['11to26']} records from $11 to $26`
+      if (updateCounts['12to28'] > 0) message += `\n- ${updateCounts['12to28']} records from $12 to $28`
       alert(message)
     } else {
       alert('No records found matching the criteria.')
@@ -1166,6 +1235,61 @@ const updateSellingPrices = async () => {
     console.error('Error updating selling prices:', err)
     const errorMessage = err instanceof Error ? err.message : 'Unknown error'
     alert('Failed to update selling prices: ' + errorMessage)
+  }
+}
+
+// Add this function before the template section
+const isPriceOutOfRange = (buyPrice: number): boolean => {
+  const buyPriceHKD = Math.round(buyPrice * 0.052)
+  return buyPriceHKD < 1 || buyPriceHKD > 12
+}
+
+// Add export function after other functions
+const exportToExcel = () => {
+  try {
+    // Filter out items where keep is true
+    const filteredItems = allData.value.filter(item => !item.keep)
+
+    // Prepare the data for export with only specified columns
+    const exportData = filteredItems.map(item => ({
+      'Item Code': item.itemCode || '',
+      'Card Name (CHI)': item.cardNameCHI,
+      'In Stock': item.quantity || 1,
+      'Selling Price (HKD)': Math.round(item.sellPrice * 0.052),
+      'Created At': formatDate(item.createDate)
+    }))
+
+    if (exportData.length === 0) {
+      alert('No data to export (all items are marked as keep)')
+      return
+    }
+
+    // Create worksheet
+    const ws = XLSX.utils.json_to_sheet(exportData)
+
+    // Set column widths for the specific columns
+    const colWidths = [
+      { wch: 15 },  // Item Code
+      { wch: 30 },  // Card Name (CHI)
+      { wch: 10 },  // In Stock
+      { wch: 15 },  // Selling Price (HKD)
+      { wch: 20 }   // Created At
+    ]
+    ws['!cols'] = colWidths
+
+    // Create workbook
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Card Data')
+
+    // Generate Excel file
+    const fileName = `card_data_${new Date().toISOString().split('T')[0]}.xlsx`
+    XLSX.writeFile(wb, fileName)
+
+    alert(`Successfully exported ${exportData.length} items!`)
+  } catch (err: unknown) {
+    console.error('Error exporting data:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to export data: ' + errorMessage)
   }
 }
 </script>
@@ -1284,6 +1408,39 @@ const updateSellingPrices = async () => {
 }
 
 .keep-row.sold-out-row:hover {
+  background-color: #bae6fd !important;
+}
+
+.out-of-range-row {
+  background-color: #fef9c3 !important; /* Light yellow background */
+}
+
+.out-of-range-row:hover {
+  background-color: #fef08a !important; /* Slightly darker yellow on hover */
+}
+
+/* Update the existing row style combinations */
+.keep-row.out-of-range-row {
+  background-color: #e0f2fe !important; /* Keep takes precedence over out-of-range */
+}
+
+.keep-row.out-of-range-row:hover {
+  background-color: #bae6fd !important;
+}
+
+.sold-out-row.out-of-range-row {
+  background-color: #fee2e2 !important; /* Sold-out takes precedence over out-of-range */
+}
+
+.sold-out-row.out-of-range-row:hover {
+  background-color: #fecaca !important;
+}
+
+.keep-row.sold-out-row.out-of-range-row {
+  background-color: #e0f2fe !important; /* Keep takes highest precedence */
+}
+
+.keep-row.sold-out-row.out-of-range-row:hover {
   background-color: #bae6fd !important;
 }
 
@@ -1884,8 +2041,6 @@ const updateSellingPrices = async () => {
   border-radius: 4px;
   font-size: 0.875rem;
   text-align: right;
-  color: #16a34a;
-  font-weight: 600;
 }
 
 .sell-price-input:focus {
@@ -1996,5 +2151,22 @@ const updateSellingPrices = async () => {
 
 .update-price-btn:hover {
   background-color: #15803d;
+}
+
+.export-btn {
+  padding: 0.5rem 1.25rem;
+  background-color: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-right: 1rem;
+}
+
+.export-btn:hover {
+  background-color: #1d4ed8;
 }
 </style> 
