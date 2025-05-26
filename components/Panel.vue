@@ -57,6 +57,20 @@
             >
               Export to Excel
             </button>
+            <button 
+              class="inactive-all-btn" 
+              @click="showInactiveAllDialog"
+              title="Mark all records as inactive"
+            >
+              Inactive All
+            </button>
+            <button 
+              class="remove-all-btn" 
+              @click="showRemoveAllDialog"
+              title="Remove all records"
+            >
+              Remove All
+            </button>
             <div class="column-filter-container">
               <button class="column-filter-btn" @click="toggleColumnFilter">
                 Columns
@@ -141,7 +155,7 @@
               class="table-row"
               :class="{ 
                 'keep-row': item.keep,
-                'sold-out-row': item.quantity === item.sold && item.quantity !== undefined && item.sold !== undefined,
+                'sold-out-row': item.quantity === 0 && item.sold > 0,
                 'out-of-range-row': isPriceOutOfRange(item.buyPrice),
                 'updated-row': updatedItems.has(item.id)
               }"
@@ -167,15 +181,15 @@
               <td v-if="visibleColumns.quantity">
                 <input 
                   type="number" 
-                  :value="item.quantity || 1"
+                  :value="item.quantity || 0"
                   @input="(e: Event) => {
                     const target = e.target as HTMLInputElement;
-                    updateQuantity(item, Number(target?.value ?? 1));
+                    updateQuantity(item, Number(target?.value ?? 0));
                   }"
                   @click.stop
                   class="quantity-input"
                   :disabled="item.keep"
-                  min="1"
+                  min="0"
                 />
               </td>
               <td v-if="visibleColumns.sold">
@@ -254,6 +268,18 @@
                   }"
                   @click.stop
                   class="stock-take-checkbox"
+                />
+              </td>
+              <td v-if="visibleColumns.special" class="special-cell">
+                <input 
+                  type="checkbox" 
+                  :checked="item.special"
+                  @change="(e: Event) => {
+                    const target = e.target as HTMLInputElement;
+                    updateSpecial(item, target?.checked ?? false);
+                  }"
+                  @click.stop
+                  class="special-checkbox"
                 />
               </td>
             </tr>
@@ -451,8 +477,6 @@
               v-model.number="singleCardForm.quantity"
               type="number"
               class="form-input"
-              min="1"
-              value="1"
             >
           </div>
           <div class="form-group">
@@ -495,6 +519,16 @@
               @input="syncSingleSellPrice('HKD', $event.target.value)"
             >
           </div>
+          <div class="form-group checkbox-group">
+            <label class="checkbox-label">
+              <input 
+                type="checkbox" 
+                v-model="singleCardForm.special"
+                class="special-checkbox"
+              >
+              Special
+            </label>
+          </div>
           <div class="dialog-actions">
             <button class="cancel-btn" @click="closeSingleDialog">Cancel</button>
             <button class="submit-btn" @click="handleAddSingleCard">Add Card</button>
@@ -523,6 +557,96 @@
           <div class="dialog-actions">
             <button class="cancel-btn" @click="closeExistDialog">Cancel</button>
             <button class="submit-btn" @click="parseAndAddExistCards">Add Cards</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Inactive All Dialog -->
+    <div v-if="showInactiveAllConfirmDialog" class="dialog-overlay" @click="closeInactiveAllDialog">
+      <div class="dialog" @click.stop>
+        <div class="dialog-header">
+          <h3>Confirm Inactive All Records</h3>
+          <button class="close-btn" @click="closeInactiveAllDialog">×</button>
+        </div>
+        <div class="dialog-content">
+          <div class="warning-text">
+            Are you sure you want to mark all records as inactive? This action cannot be undone.
+          </div>
+          <div class="dialog-actions">
+            <button class="cancel-btn" @click="closeInactiveAllDialog">Cancel</button>
+            <button class="submit-btn danger" @click="handleInactiveAll">Confirm Inactive All</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Remove All Dialog -->
+    <div v-if="showRemoveAllConfirmDialog" class="dialog-overlay" @click="closeRemoveAllDialog">
+      <div class="dialog" @click.stop>
+        <div class="dialog-header">
+          <h3>Confirm Remove All Records</h3>
+          <button class="close-btn" @click="closeRemoveAllDialog">×</button>
+        </div>
+        <div class="dialog-content">
+          <div class="warning-text">
+            ⚠️ WARNING: This action will permanently delete ALL records from the database. This action cannot be undone.
+          </div>
+          <div class="warning-details">
+            <p>This will delete {{ allData.length }} records.</p>
+            <p>Please type "DELETE" to confirm:</p>
+            <input 
+              v-model="deleteConfirmation"
+              type="text"
+              class="form-input"
+              placeholder="Type DELETE to confirm"
+            >
+          </div>
+          <div class="dialog-actions">
+            <button class="cancel-btn" @click="closeRemoveAllDialog">Cancel</button>
+            <button 
+              class="submit-btn danger" 
+              @click="handleRemoveAll"
+              :disabled="deleteConfirmation !== 'DELETE'"
+            >
+              Confirm Delete All
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Duplicate Cards Dialog -->
+    <div v-if="showDuplicateDialog" class="dialog-overlay" @click="closeDuplicateDialog">
+      <div class="dialog" @click.stop>
+        <div class="dialog-header">
+          <h3>Duplicate Cards Found</h3>
+          <button class="close-btn" @click="closeDuplicateDialog">×</button>
+        </div>
+        <div class="dialog-content">
+          <div class="warning-text">
+            The following cards already exist in the database and were not added:
+          </div>
+          <div class="duplicate-list">
+            <table class="duplicate-table">
+              <thead>
+                <tr>
+                  <th>Card Name (JP)</th>
+                  <th>Card Name (CHI)</th>
+                  <th>Item Code</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="card in duplicateCards" :key="card.cardNameJP">
+                  <td>{{ card.cardNameJP }}</td>
+                  <td>{{ card.cardNameCHI }}</td>
+                  <td>{{ card.itemCode }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="dialog-actions">
+            <button class="submit-btn" @click="closeDuplicateDialog">OK</button>
           </div>
         </div>
       </div>
@@ -572,6 +696,7 @@ interface CardItem {
   keep?: boolean
   stockTake?: boolean
   active?: boolean
+  special?: boolean
   [key: string]: any
 }
 
@@ -689,7 +814,8 @@ const columns = {
   createDate: { label: 'Create Date', key: 'createDate' },
   image: { label: 'Image', key: 'image' },
   keep: { label: 'Keep', key: 'keep' },
-  stockTake: { label: 'Stock Take', key: 'stockTake' }
+  stockTake: { label: 'Stock Take', key: 'stockTake' },
+  special: { label: 'Special', key: 'special' }
 }
 
 interface VisibleColumns {
@@ -715,7 +841,8 @@ const visibleColumns = ref<VisibleColumns>({
   createDate: true,
   image: true,
   keep: true,
-  stockTake: true
+  stockTake: true,
+  special: true
 })
 
 // Add date range filter function
@@ -807,6 +934,22 @@ watch(() => props.searchQuery, () => {
 const showDialog = ref(false)
 const bulkInput = ref('')
 
+// Add new refs for duplicate dialog
+const showDuplicateDialog = ref(false)
+const duplicateCards = ref<Partial<CardItem>[]>([])
+
+// Add new functions for duplicate dialog
+const showDuplicateCardsDialog = (cards: Partial<CardItem>[]) => {
+  duplicateCards.value = cards
+  showDuplicateDialog.value = true
+}
+
+const closeDuplicateDialog = () => {
+  showDuplicateDialog.value = false
+  duplicateCards.value = []
+}
+
+// Update parseAndAddCards function
 const parseAndAddCards = async () => {
   if (!bulkInput.value.trim()) {
     alert('Please paste card data')
@@ -817,8 +960,10 @@ const parseAndAddCards = async () => {
     console.log('Starting to parse card data...')
     const lines = bulkInput.value.split('\n')
     const cards: Partial<CardItem>[] = []
+    const duplicates: Partial<CardItem>[] = []
     let currentCard: Partial<CardItem> = {}
 
+    // First pass: collect all cards
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim()
       console.log('Processing line:', line)
@@ -837,7 +982,7 @@ const parseAndAddCards = async () => {
         console.log('Card name:', currentCard.cardNameJP)
       } else if (line === '數量') {
         const quantity = parseInt(lines[i + 1].trim())
-        currentCard.quantity = isNaN(quantity) ? 1 : quantity
+        currentCard.quantity = isNaN(quantity) ? 0 : quantity  // Change default from 1 to 0
         console.log('Quantity:', currentCard.quantity)
       } else if (line === '單件售價 (JPY)') {
         const priceText = lines[i + 1].trim()
@@ -872,15 +1017,31 @@ const parseAndAddCards = async () => {
       cards.push(currentCard)
     }
 
-    console.log('Total cards to add:', cards.length)
+    // Check for duplicates
+    const existingCardNames = new Set(allData.value.map(item => item.cardNameJP))
+    const uniqueCards = cards.filter(card => {
+      if (existingCardNames.has(card.cardNameJP)) {
+        duplicates.push(card)
+        return false
+      }
+      return true
+    })
 
-    // Add all cards to Firestore
-    for (const card of cards) {
+    console.log('Total cards to add:', uniqueCards.length)
+    console.log('Duplicate cards found:', duplicates.length)
+
+    // Add unique cards to Firestore
+    for (const card of uniqueCards) {
       console.log('Adding card to Firestore:', card)
       await addDoc(collection(db!, 'cards'), card)
     }
     
-    console.log('All cards added successfully')
+    if (duplicates.length > 0) {
+      showDuplicateCardsDialog(duplicates)
+    } else {
+      alert(`Successfully added ${uniqueCards.length} cards!`)
+    }
+    
     closeDialog()
   } catch (err: unknown) {
     console.error('Error in parseAndAddCards:', err)
@@ -952,29 +1113,46 @@ const formatHKDPrice = (jpyPrice: number): string => {
 
 // Add new refs for remove all dialog
 const showRemoveAllConfirmDialog = ref(false)
+const deleteConfirmation = ref('')
 
-// Add remove all functions
+// Add new functions for remove all
 const showRemoveAllDialog = () => {
   showRemoveAllConfirmDialog.value = true
+  deleteConfirmation.value = ''
 }
 
 const closeRemoveAllDialog = () => {
   showRemoveAllConfirmDialog.value = false
+  deleteConfirmation.value = ''
 }
 
 const handleRemoveAll = async () => {
+  if (deleteConfirmation.value !== 'DELETE') {
+    alert('Please type "DELETE" to confirm')
+    return
+  }
+
   try {
     const batch = writeBatch(db!)
+    const totalRecords = allData.value.length
+    
+    if (totalRecords === 0) {
+      alert('No records found to delete.')
+      return
+    }
+
     allData.value.forEach(item => {
       const docRef = doc(db!, 'cards', item.id)
       batch.delete(docRef)
     })
+
     await batch.commit()
+    alert(`Successfully deleted ${totalRecords} records.`)
     closeRemoveAllDialog()
   } catch (err: unknown) {
-    console.error('Error removing all items:', err)
+    console.error('Error removing all records:', err)
     const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-    alert('Failed to remove all items: ' + errorMessage)
+    alert('Failed to remove all records: ' + errorMessage)
   }
 }
 
@@ -1248,7 +1426,10 @@ const updateSellingPrices = async () => {
     const recordsToUpdate = allData.value.filter(item => {
       const createDate = item.createDate.toDate()
       const buyPriceHKD = Math.round(item.buyPrice * 0.052)
-      return createDate >= targetDate && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(buyPriceHKD)
+      // Skip special records
+      return createDate >= targetDate && 
+             [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(buyPriceHKD) &&
+             !item.special // Add this condition to skip special records
     })
 
     // Update each matching record
@@ -1335,6 +1516,20 @@ const updateSellingPrices = async () => {
       if (updateCounts['10to24'] > 0) message += `\n- ${updateCounts['10to24']} records from $10 to $24`
       if (updateCounts['11to26'] > 0) message += `\n- ${updateCounts['11to26']} records from $11 to $26`
       if (updateCounts['12to28'] > 0) message += `\n- ${updateCounts['12to28']} records from $12 to $28`
+
+      // Add information about skipped special records
+      const specialRecords = allData.value.filter(item => {
+        const createDate = item.createDate.toDate()
+        const buyPriceHKD = Math.round(item.buyPrice * 0.052)
+        return createDate >= targetDate && 
+               [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(buyPriceHKD) &&
+               item.special
+      })
+      
+      if (specialRecords.length > 0) {
+        message += `\n\nSkipped ${specialRecords.length} special records.`
+      }
+
       alert(message)
     } else {
       alert('No records found matching the criteria.')
@@ -1407,11 +1602,12 @@ const singleCardForm = ref({
   cardNameJP: '',
   cardNameCHI: '',
   itemCode: '',
-  quantity: 1,
+  quantity: 0,  // Change default from 1 to 0
   buyPriceJPY: 0,
   buyPriceHKD: 0,
   sellPriceJPY: 0,
-  sellPriceHKD: 0
+  sellPriceHKD: 0,
+  special: false
 })
 
 // Add new functions for single card dialog
@@ -1426,11 +1622,12 @@ const closeSingleDialog = () => {
     cardNameJP: '',
     cardNameCHI: '',
     itemCode: '',
-    quantity: 1,
+    quantity: 0,  // Change default from 1 to 0
     buyPriceJPY: 0,
     buyPriceHKD: 0,
     sellPriceJPY: 0,
-    sellPriceHKD: 0
+    sellPriceHKD: 0,
+    special: false
   }
 }
 
@@ -1459,21 +1656,37 @@ const handleAddSingleCard = async () => {
       return
     }
 
+    // Check for duplicates
+    const isDuplicate = allData.value.some(item => 
+      item.cardNameJP === singleCardForm.value.cardNameJP
+    )
+
+    if (isDuplicate) {
+      showDuplicateCardsDialog([{
+        cardNameJP: singleCardForm.value.cardNameJP,
+        cardNameCHI: singleCardForm.value.cardNameCHI,
+        itemCode: singleCardForm.value.itemCode
+      }])
+      return
+    }
+
     const cardData = {
       cardNameJP: singleCardForm.value.cardNameJP,
       cardNameCHI: singleCardForm.value.cardNameCHI,
       itemCode: singleCardForm.value.itemCode,
-      quantity: singleCardForm.value.quantity || 1,
+      quantity: singleCardForm.value.quantity || 0,  // Change default from 1 to 0
       buyPrice: singleCardForm.value.buyPriceJPY,
       sellPrice: singleCardForm.value.sellPriceJPY,
       sold: 0,
       keep: false,
       stockTake: false,
+      special: singleCardForm.value.special,
       active: true,
       createDate: serverTimestamp()
     }
 
     await addDoc(collection(db!, 'cards'), cardData)
+    alert('Card added successfully!')
     closeSingleDialog()
   } catch (err: unknown) {
     console.error('Error adding single card:', err)
@@ -1496,6 +1709,7 @@ const closeExistDialog = () => {
   existInput.value = ''
 }
 
+// Update parseAndAddExistCards function
 const parseAndAddExistCards = async () => {
   if (!existInput.value.trim()) {
     alert('Please paste existing card data')
@@ -1506,6 +1720,7 @@ const parseAndAddExistCards = async () => {
     console.log('Starting to parse existing card data...')
     const lines = existInput.value.split('\n')
     const cards: Partial<CardItem>[] = []
+    const duplicates: Partial<CardItem>[] = []
     
     // Skip header line
     for (let i = 1; i < lines.length; i++) {
@@ -1531,6 +1746,7 @@ const parseAndAddExistCards = async () => {
         keep: false,
         stockTake: false,
         active: true,
+        special: specialNote === 'Special',
         createDate: serverTimestamp()
       }
 
@@ -1538,15 +1754,31 @@ const parseAndAddExistCards = async () => {
       cards.push(cardData)
     }
 
-    console.log('Total cards to add:', cards.length)
+    // Check for duplicates
+    const existingCardNames = new Set(allData.value.map(item => item.cardNameJP))
+    const uniqueCards = cards.filter(card => {
+      if (existingCardNames.has(card.cardNameJP)) {
+        duplicates.push(card)
+        return false
+      }
+      return true
+    })
 
-    // Add all cards to Firestore
-    for (const card of cards) {
+    console.log('Total cards to add:', uniqueCards.length)
+    console.log('Duplicate cards found:', duplicates.length)
+
+    // Add unique cards to Firestore
+    for (const card of uniqueCards) {
       console.log('Adding card to Firestore:', card)
       await addDoc(collection(db!, 'cards'), card)
     }
     
-    console.log('All cards added successfully')
+    if (duplicates.length > 0) {
+      showDuplicateCardsDialog(duplicates)
+    } else {
+      alert(`Successfully added ${uniqueCards.length} cards!`)
+    }
+    
     closeExistDialog()
   } catch (err: unknown) {
     console.error('Error in parseAndAddExistCards:', err)
@@ -1571,6 +1803,61 @@ const handleInactive = async () => {
     console.error('Error marking card as inactive:', err)
     const errorMessage = err instanceof Error ? err.message : 'Unknown error'
     alert('Failed to mark card as inactive: ' + errorMessage)
+  }
+}
+
+// Add new refs for inactive all dialog
+const showInactiveAllConfirmDialog = ref(false)
+
+// Add new functions for inactive all
+const showInactiveAllDialog = () => {
+  showInactiveAllConfirmDialog.value = true
+}
+
+const closeInactiveAllDialog = () => {
+  showInactiveAllConfirmDialog.value = false
+}
+
+const handleInactiveAll = async () => {
+  try {
+    const batch = writeBatch(db!)
+    const activeRecords = allData.value.filter(item => item.active !== false)
+    
+    if (activeRecords.length === 0) {
+      alert('No active records found to update.')
+      return
+    }
+
+    activeRecords.forEach(item => {
+      const docRef = doc(db!, 'cards', item.id)
+      batch.update(docRef, {
+        active: false,
+        updateDate: serverTimestamp()
+      })
+    })
+
+    await batch.commit()
+    alert(`Successfully marked ${activeRecords.length} records as inactive.`)
+    closeInactiveAllDialog()
+  } catch (err: unknown) {
+    console.error('Error inactivating all records:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to inactive all records: ' + errorMessage)
+  }
+}
+
+// Add updateSpecial function
+const updateSpecial = async (item: CardItem, special: boolean) => {
+  try {
+    const docRef = doc(db!, 'cards', item.id)
+    await updateDoc(docRef, {
+      special: special,
+      updateDate: serverTimestamp()
+    })
+  } catch (err: unknown) {
+    console.error('Error updating special status:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to update special status: ' + errorMessage)
   }
 }
 </script>
@@ -2541,5 +2828,98 @@ const handleInactive = async () => {
 
 .keep-row.sold-out-row.updated-row:hover {
   background-color: #bfdbfe !important;
+}
+
+.inactive-all-btn {
+  padding: 0.5rem 1.25rem;
+  background-color: #dc2626;
+  color: white;
+  border: none;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-right: 1rem;
+}
+
+.inactive-all-btn:hover {
+  background-color: #b91c1c;
+}
+
+.special-cell {
+  text-align: center;
+  padding: 0.5rem;
+}
+
+.special-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: #7c3aed; /* Purple color for special checkbox */
+}
+
+.special-checkbox:focus {
+  outline: 2px solid #7c3aed;
+  outline-offset: 2px;
+}
+
+.warning-details {
+  margin: 1rem 0;
+  padding: 1rem;
+  background-color: #fee2e2;
+  border-radius: 6px;
+  border: 1px solid #fecaca;
+}
+
+.warning-details p {
+  margin: 0.5rem 0;
+  color: #991b1b;
+}
+
+.warning-details input {
+  margin-top: 0.5rem;
+  border-color: #fecaca;
+}
+
+.warning-details input:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.1);
+}
+
+.submit-btn.danger:disabled {
+  background-color: #fca5a5;
+  cursor: not-allowed;
+}
+
+.duplicate-list {
+  margin: 1rem 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.duplicate-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.duplicate-table th,
+.duplicate-table td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.duplicate-table th {
+  background-color: #f9fafb;
+  font-weight: 600;
+  color: #374151;
+  position: sticky;
+  top: 0;
+}
+
+.duplicate-table tr:hover {
+  background-color: #f3f4f6;
 }
 </style> 
