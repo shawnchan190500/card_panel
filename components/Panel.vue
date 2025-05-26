@@ -34,11 +34,14 @@
                 @change="filterByDateRange"
               >
             </div>
+            <button class="add-single-btn" @click="showAddSingleDialog">
+              Add Single Card
+            </button>
             <button class="add-btn" @click="showAddDialog">
               Add Cards
             </button>
-            <button class="remove-all-btn" @click="showRemoveAllDialog">
-              Remove All
+            <button class="add-exist-btn" @click="showAddExistDialog">
+              Add Exist Cards
             </button>
             <button 
               class="update-price-btn" 
@@ -139,7 +142,8 @@
               :class="{ 
                 'keep-row': item.keep,
                 'sold-out-row': item.quantity === item.sold && item.quantity !== undefined && item.sold !== undefined,
-                'out-of-range-row': isPriceOutOfRange(item.buyPrice)
+                'out-of-range-row': isPriceOutOfRange(item.buyPrice),
+                'updated-row': updatedItems.has(item.id)
               }"
               @click="handleRowClick(item)"
             >
@@ -398,7 +402,7 @@
           <div class="dialog-actions">
             <div class="dialog-actions-left">
               <button class="cancel-btn" @click="closeEditDialog">Cancel</button>
-              <button class="remove-btn" @click="handleRemoveAll">Remove</button>
+              <button class="inactive-btn" @click="handleInactive">Inactive</button>
             </div>
             <button class="submit-btn" @click="handleEdit">Save Changes</button>
           </div>
@@ -406,18 +410,119 @@
       </div>
     </div>
 
-    <!-- Add Remove All Confirmation Dialog -->
-    <div v-if="showRemoveAllConfirmDialog" class="dialog-overlay">
+    <!-- Add Single Card Dialog -->
+    <div v-if="showSingleDialog" class="dialog-overlay" @click="closeSingleDialog">
       <div class="dialog" @click.stop>
         <div class="dialog-header">
-          <h3>Confirm Remove All</h3>
-          <button class="close-btn" @click="closeRemoveAllDialog">×</button>
+          <h3>Add Single Card</h3>
+          <button class="close-btn" @click="closeSingleDialog">×</button>
         </div>
         <div class="dialog-content">
-          <p class="warning-text">Are you sure you want to remove all cards? This action cannot be undone.</p>
+          <div class="form-group">
+            <label>Card Name (JP)</label>
+            <input 
+              v-model="singleCardForm.cardNameJP"
+              type="text"
+              class="form-input"
+              placeholder="Enter Japanese card name"
+            >
+          </div>
+          <div class="form-group">
+            <label>Card Name (CHI)</label>
+            <input 
+              v-model="singleCardForm.cardNameCHI"
+              type="text"
+              class="form-input"
+              placeholder="Enter Chinese card name"
+            >
+          </div>
+          <div class="form-group">
+            <label>Item Code</label>
+            <input 
+              v-model="singleCardForm.itemCode"
+              type="text"
+              class="form-input"
+              placeholder="Enter item code"
+            >
+          </div>
+          <div class="form-group">
+            <label>Quantity</label>
+            <input 
+              v-model.number="singleCardForm.quantity"
+              type="number"
+              class="form-input"
+              min="1"
+              value="1"
+            >
+          </div>
+          <div class="form-group">
+            <label>Buying Price (JPY)</label>
+            <input 
+              v-model.number="singleCardForm.buyPriceJPY"
+              type="number"
+              class="form-input"
+              min="0"
+              @input="syncSingleBuyPrice('JPY', $event.target.value)"
+            >
+          </div>
+          <div class="form-group">
+            <label>Buying Price (HKD)</label>
+            <input 
+              v-model.number="singleCardForm.buyPriceHKD"
+              type="number"
+              class="form-input"
+              min="0"
+              @input="syncSingleBuyPrice('HKD', $event.target.value)"
+            >
+          </div>
+          <div class="form-group">
+            <label>Selling Price (JPY)</label>
+            <input 
+              v-model.number="singleCardForm.sellPriceJPY"
+              type="number"
+              class="form-input"
+              min="0"
+              @input="syncSingleSellPrice('JPY', $event.target.value)"
+            >
+          </div>
+          <div class="form-group">
+            <label>Selling Price (HKD)</label>
+            <input 
+              v-model.number="singleCardForm.sellPriceHKD"
+              type="number"
+              class="form-input"
+              min="0"
+              @input="syncSingleSellPrice('HKD', $event.target.value)"
+            >
+          </div>
           <div class="dialog-actions">
-            <button class="cancel-btn" @click="closeRemoveAllDialog">Cancel</button>
-            <button class="submit-btn danger" @click="handleRemoveAll">Remove All</button>
+            <button class="cancel-btn" @click="closeSingleDialog">Cancel</button>
+            <button class="submit-btn" @click="handleAddSingleCard">Add Card</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Exist Cards Dialog -->
+    <div v-if="showExistDialog" class="dialog-overlay" @click="closeExistDialog">
+      <div class="dialog" @click.stop>
+        <div class="dialog-header">
+          <h3>Add Existing Cards</h3>
+          <button class="close-btn" @click="closeExistDialog">×</button>
+        </div>
+        <div class="dialog-content">
+          <div class="form-group">
+            <label>Paste Existing Card Data</label>
+            <textarea 
+              v-model="existInput"
+              placeholder="Paste existing card data here..."
+              rows="10"
+              class="bulk-input"
+            ></textarea>
+          </div>
+          <div class="dialog-actions">
+            <button class="cancel-btn" @click="closeExistDialog">Cancel</button>
+            <button class="submit-btn" @click="parseAndAddExistCards">Add Cards</button>
           </div>
         </div>
       </div>
@@ -466,7 +571,8 @@ interface CardItem {
   sold?: number
   keep?: boolean
   stockTake?: boolean
-  [key: string]: any // Add index signature
+  active?: boolean
+  [key: string]: any
 }
 
 const allData = ref<CardItem[]>([])
@@ -628,7 +734,7 @@ const filterByDateRange = () => {
 
 // Update the filteredData computed property
 const filteredData = computed(() => {
-  let data = allData.value
+  let data = allData.value.filter(item => item.active !== false) // Only show active cards
   
   // Apply date range filter
   if (dateRange.value.start && dateRange.value.end) {
@@ -697,16 +803,6 @@ const paginationEnd = computed(() => {
 watch(() => props.searchQuery, () => {
   currentPage.value = 1
 })
-
-const removeItem = async (id: string) => {
-  try {
-    await deleteDoc(doc(db!, 'cards', id))
-  } catch (err: unknown) {
-    console.error('Error removing item:', err)
-    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-    throw new Error('Failed to remove item: ' + errorMessage)
-  }
-}
 
 const showDialog = ref(false)
 const bulkInput = ref('')
@@ -802,7 +898,8 @@ const editForm = ref({
   buyPriceJPY: 0,
   buyPriceHKD: 0,
   sellPriceJPY: 0,
-  sellPriceHKD: 0
+  sellPriceHKD: 0,
+  active: true
 })
 
 // Add edit functions
@@ -814,7 +911,8 @@ const handleRowClick = (item: CardItem) => {
     buyPriceJPY: item.buyPrice,
     buyPriceHKD: Math.round(item.buyPrice * 0.052),
     sellPriceJPY: item.sellPrice,
-    sellPriceHKD: Math.round(item.sellPrice * 0.052)
+    sellPriceHKD: Math.round(item.sellPrice * 0.052),
+    active: item.active !== false // Default to true if not set
   }
   showEditDialog.value = true
 }
@@ -829,6 +927,7 @@ const handleEdit = async () => {
       cardNameCHI: editForm.value.cardNameCHI,
       buyPrice: editForm.value.buyPriceJPY,
       sellPrice: editForm.value.sellPriceJPY,
+      active: editForm.value.active,
       updateDate: serverTimestamp()
     })
     showEditDialog.value = false
@@ -1119,6 +1218,9 @@ const updateStockTake = async (item: CardItem, stockTake: boolean) => {
   }
 }
 
+// Add a ref to track updated items
+const updatedItems = ref<Set<string>>(new Set())
+
 // Update updateSellingPrices function
 const updateSellingPrices = async () => {
   try {
@@ -1138,6 +1240,9 @@ const updateSellingPrices = async () => {
       '11to26': 0,
       '12to28': 0
     }
+
+    // Clear previous updated items
+    updatedItems.value.clear()
 
     // Filter records that meet the criteria
     const recordsToUpdate = allData.value.filter(item => {
@@ -1209,6 +1314,9 @@ const updateSellingPrices = async () => {
         sellPrice: newSellPriceJPY,
         updateDate: serverTimestamp()
       })
+
+      // Add item to updated items set
+      updatedItems.value.add(item.id)
     }
 
     const hasUpdates = Object.values(updateCounts).some(count => count > 0)
@@ -1290,6 +1398,179 @@ const exportToExcel = () => {
     console.error('Error exporting data:', err)
     const errorMessage = err instanceof Error ? err.message : 'Unknown error'
     alert('Failed to export data: ' + errorMessage)
+  }
+}
+
+// Add new refs for single card dialog
+const showSingleDialog = ref(false)
+const singleCardForm = ref({
+  cardNameJP: '',
+  cardNameCHI: '',
+  itemCode: '',
+  quantity: 1,
+  buyPriceJPY: 0,
+  buyPriceHKD: 0,
+  sellPriceJPY: 0,
+  sellPriceHKD: 0
+})
+
+// Add new functions for single card dialog
+const showAddSingleDialog = () => {
+  showSingleDialog.value = true
+}
+
+const closeSingleDialog = () => {
+  showSingleDialog.value = false
+  // Reset form
+  singleCardForm.value = {
+    cardNameJP: '',
+    cardNameCHI: '',
+    itemCode: '',
+    quantity: 1,
+    buyPriceJPY: 0,
+    buyPriceHKD: 0,
+    sellPriceJPY: 0,
+    sellPriceHKD: 0
+  }
+}
+
+const syncSingleBuyPrice = (currency: 'JPY' | 'HKD', value: string) => {
+  const numValue = Number(value)
+  if (currency === 'JPY') {
+    singleCardForm.value.buyPriceHKD = Math.round(numValue * 0.052)
+  } else {
+    singleCardForm.value.buyPriceJPY = Math.round(numValue / 0.052)
+  }
+}
+
+const syncSingleSellPrice = (currency: 'JPY' | 'HKD', value: string) => {
+  const numValue = Number(value)
+  if (currency === 'JPY') {
+    singleCardForm.value.sellPriceHKD = Math.round(numValue * 0.052)
+  } else {
+    singleCardForm.value.sellPriceJPY = Math.round(numValue / 0.052)
+  }
+}
+
+const handleAddSingleCard = async () => {
+  try {
+    if (!singleCardForm.value.cardNameJP || !singleCardForm.value.cardNameCHI) {
+      alert('Please fill in both Japanese and Chinese card names')
+      return
+    }
+
+    const cardData = {
+      cardNameJP: singleCardForm.value.cardNameJP,
+      cardNameCHI: singleCardForm.value.cardNameCHI,
+      itemCode: singleCardForm.value.itemCode,
+      quantity: singleCardForm.value.quantity || 1,
+      buyPrice: singleCardForm.value.buyPriceJPY,
+      sellPrice: singleCardForm.value.sellPriceJPY,
+      sold: 0,
+      keep: false,
+      stockTake: false,
+      active: true,
+      createDate: serverTimestamp()
+    }
+
+    await addDoc(collection(db!, 'cards'), cardData)
+    closeSingleDialog()
+  } catch (err: unknown) {
+    console.error('Error adding single card:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to add card: ' + errorMessage)
+  }
+}
+
+// Add new refs for exist cards dialog
+const showExistDialog = ref(false)
+const existInput = ref('')
+
+// Add new functions for exist cards dialog
+const showAddExistDialog = () => {
+  showExistDialog.value = true
+}
+
+const closeExistDialog = () => {
+  showExistDialog.value = false
+  existInput.value = ''
+}
+
+const parseAndAddExistCards = async () => {
+  if (!existInput.value.trim()) {
+    alert('Please paste existing card data')
+    return
+  }
+
+  try {
+    console.log('Starting to parse existing card data...')
+    const lines = existInput.value.split('\n')
+    const cards: Partial<CardItem>[] = []
+    
+    // Skip header line
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (!line) continue // Skip empty lines
+      
+      console.log('Processing line:', line)
+      const [shop, itemCode, cardNameCHI, quantity, price, specialNote] = line.split('\t')
+      
+      if (!itemCode || !cardNameCHI || !quantity || !price) {
+        console.warn('Skipping invalid line:', line)
+        continue
+      }
+
+      const cardData: Partial<CardItem> = {
+        itemCode: itemCode.trim(),
+        cardNameCHI: cardNameCHI.trim(),
+        cardNameJP: cardNameCHI.trim(), // Using Chinese name as Japanese name initially
+        quantity: parseInt(quantity.trim()),
+        sellPrice: Math.round(parseFloat(price.trim()) / 0.052), // Convert HKD to JPY
+        buyPrice: 0, // Default buy price
+        sold: 0,
+        keep: false,
+        stockTake: false,
+        active: true,
+        createDate: serverTimestamp()
+      }
+
+      console.log('Adding card to batch:', cardData)
+      cards.push(cardData)
+    }
+
+    console.log('Total cards to add:', cards.length)
+
+    // Add all cards to Firestore
+    for (const card of cards) {
+      console.log('Adding card to Firestore:', card)
+      await addDoc(collection(db!, 'cards'), card)
+    }
+    
+    console.log('All cards added successfully')
+    closeExistDialog()
+  } catch (err: unknown) {
+    console.error('Error in parseAndAddExistCards:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to add cards: ' + errorMessage)
+  }
+}
+
+// Add handleInactive function
+const handleInactive = async () => {
+  if (!editingItem.value) return
+
+  try {
+    const docRef = doc(db!, 'cards', editingItem.value.id)
+    await updateDoc(docRef, {
+      active: false,
+      updateDate: serverTimestamp()
+    })
+    showEditDialog.value = false
+    editingItem.value = null
+  } catch (err: unknown) {
+    console.error('Error marking card as inactive:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to mark card as inactive: ' + errorMessage)
   }
 }
 </script>
@@ -2168,5 +2449,97 @@ const exportToExcel = () => {
 
 .export-btn:hover {
   background-color: #1d4ed8;
+}
+
+.add-single-btn {
+  padding: 0.5rem 1.25rem;
+  background-color: #059669;
+  color: white;
+  border: none;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-right: 0.5rem;
+}
+
+.add-single-btn:hover {
+  background-color: #047857;
+}
+
+.add-exist-btn {
+  padding: 0.5rem 1.25rem;
+  background-color: #7c3aed;
+  color: white;
+  border: none;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-right: 0.5rem;
+}
+
+.add-exist-btn:hover {
+  background-color: #6d28d9;
+}
+
+.inactive-btn {
+  padding: 0.75rem 1.5rem;
+  background-color: #6b7280;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.inactive-btn:hover {
+  background-color: #4b5563;
+}
+
+.updated-row {
+  background-color: #dbeafe !important; /* Light blue background */
+  transition: background-color 0.3s ease;
+}
+
+.updated-row:hover {
+  background-color: #bfdbfe !important; /* Slightly darker blue on hover */
+}
+
+/* Update the existing row style combinations */
+.keep-row.updated-row {
+  background-color: #dbeafe !important; /* Updated takes precedence over keep */
+}
+
+.keep-row.updated-row:hover {
+  background-color: #bfdbfe !important;
+}
+
+.sold-out-row.updated-row {
+  background-color: #dbeafe !important; /* Updated takes precedence over sold-out */
+}
+
+.sold-out-row.updated-row:hover {
+  background-color: #bfdbfe !important;
+}
+
+.out-of-range-row.updated-row {
+  background-color: #dbeafe !important; /* Updated takes precedence over out-of-range */
+}
+
+.out-of-range-row.updated-row:hover {
+  background-color: #bfdbfe !important;
+}
+
+.keep-row.sold-out-row.updated-row {
+  background-color: #dbeafe !important; /* Updated takes highest precedence */
+}
+
+.keep-row.sold-out-row.updated-row:hover {
+  background-color: #bfdbfe !important;
 }
 </style> 
