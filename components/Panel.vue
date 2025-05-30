@@ -71,6 +71,13 @@
             >
               Remove All
             </button>
+            <button 
+              class="show-sold-btn" 
+              @click="showSoldItemsDialog"
+              title="Show all sold items"
+            >
+              Show Sold Items
+            </button>
             <div class="column-filter-container">
               <button class="column-filter-btn" @click="toggleColumnFilter">
                 Columns
@@ -102,6 +109,13 @@
                 </div>
               </div>
             </div>
+            <button 
+              class="update-item-code-btn" 
+              @click="showUpdateItemCodeDialog"
+              title="Update item codes by matching card names"
+            >
+              Update Item Codes
+            </button>
           <div class="page-size-selector">
             <label for="pageSize">Show</label>
             <select 
@@ -127,17 +141,17 @@
           <thead>
             <tr>
               <th v-for="col in tableColumns" :key="col.key">
-                <template v-if="col.key === 'createDate'">
+                <template v-if="col.key === 'createDate' || col.key === 'updateDate' || col.key === 'sold'">
                   <span 
-                class="sortable" 
-                    @click="sortBy('createDate')"
-                    :class="{ 'sorted': sortKey === 'createDate' }"
-              >
+                    class="sortable" 
+                    @click="sortBy(col.key)"
+                    :class="{ 'sorted': sortKey === col.key }"
+                  >
                     {{ col.label }}
-                    <span class="sort-icon" v-if="sortKey === 'createDate'">
-                  {{ sortOrder === 'asc' ? '↑' : '↓' }}
-                </span>
-                </span>
+                    <span class="sort-icon" v-if="sortKey === col.key">
+                      {{ sortOrder === 'asc' ? '↑' : '↓' }}
+                    </span>
+                  </span>
                 </template>
                 <template v-else>
                   {{ col.label }}
@@ -235,6 +249,7 @@
               <td v-if="visibleColumns.profitPercentage">{{ calculateProfitPercentage(item.buyPrice, item.sellPrice) }}</td>
               <td v-if="visibleColumns.profit" class="profit">{{ calculateProfit(item.buyPrice, item.sellPrice) }}</td>
               <td v-if="visibleColumns.createDate">{{ formatDate(item.createDate) }}</td>
+              <td v-if="visibleColumns.updateDate">{{ formatDate(item.updateDate) }}</td>
               <td v-if="visibleColumns.image" class="image-cell">
                 <a 
                   :href="getGoogleSearchUrl(item.cardNameJP)" 
@@ -651,6 +666,113 @@
         </div>
       </div>
     </div>
+
+    <!-- Add Sold Items Dialog -->
+    <div v-if="showSoldItemsConfirmDialog" class="dialog-overlay" @click="closeSoldItemsDialog">
+      <div class="dialog sold-items-dialog" @click.stop>
+        <div class="dialog-header">
+          <h3>Sold Items</h3>
+          <button class="close-btn" @click="closeSoldItemsDialog">×</button>
+        </div>
+        <div class="dialog-content">
+          <div class="sold-items-table-container">
+            <table class="sold-items-table">
+              <thead>
+                <tr>
+                  <th>Item Code</th>
+                  <th>Card Name (CHI)</th>
+                  <th>
+                    <span 
+                      class="sortable" 
+                      @click="sortSoldItems('sold')"
+                      :class="{ 'sorted': soldItemsSortKey === 'sold' }"
+                    >
+                      Sold
+                      <span class="sort-icon" v-if="soldItemsSortKey === 'sold'">
+                        {{ soldItemsSortOrder === 'asc' ? '↑' : '↓' }}
+                      </span>
+                    </span>
+                  </th>
+                  <th>Buying Price (HKD)</th>
+                  <th>Selling Price (HKD)</th>
+                  <th>Profit (HKD)</th>
+                  <th>Create Date</th>
+                  <th>
+                    <span 
+                      class="sortable" 
+                      @click="sortSoldItems('updateDate')"
+                      :class="{ 'sorted': soldItemsSortKey === 'updateDate' }"
+                    >
+                      Last Update
+                      <span class="sort-icon" v-if="soldItemsSortKey === 'updateDate'">
+                        {{ soldItemsSortOrder === 'asc' ? '↑' : '↓' }}
+                      </span>
+                    </span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in soldItems" :key="item.id">
+                  <td>{{ item.itemCode || '-' }}</td>
+                  <td>{{ item.cardNameCHI }}</td>
+                  <td>{{ item.sold || 0 }}</td>
+                  <td>{{ formatHKDPrice(item.buyPrice) }}</td>
+                  <td>{{ formatHKDPrice(item.sellPrice) }}</td>
+                  <td>{{ calculateTotalProfit(item.buyPrice, item.sellPrice, item.sold) }}</td>
+                  <td>{{ formatDate(item.createDate) }}</td>
+                  <td>{{ formatDate(item.updateDate) }}</td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="5" class="total-profit-cell">Total Profit:</td>
+                  <td colspan="3" class="total-profit-amount">HK$ {{ Math.round(soldItemsTotalProfit) }}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <div class="dialog-actions">
+            <button class="submit-btn" @click="closeSoldItemsDialog">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add new dialog for item code update -->
+    <div v-if="showItemCodeDialog" class="dialog-overlay" @click="closeItemCodeDialog">
+      <div class="dialog" @click.stop>
+        <div class="dialog-header">
+          <h3>Update Item Codes</h3>
+          <button class="close-btn" @click="closeItemCodeDialog">×</button>
+        </div>
+        <div class="dialog-content">
+          <div class="form-group">
+            <label>Paste Item Code Data</label>
+            <p class="help-text">Paste data in the format: [Number] [Tab] [Shop] [Tab] [Item Code] [Tab] [Card Name (CHI)] [Tab] [Quantity] [Tab] [Price]</p>
+            <textarea 
+              v-model="itemCodeInput"
+              placeholder="Paste item code data here..."
+              rows="10"
+              class="bulk-input"
+            ></textarea>
+          </div>
+          
+          <div v-if="itemCodeUpdateStatus.unmatched.length > 0" class="unmatched-list">
+            <h4>Unmatched Cards:</h4>
+            <ul>
+              <li v-for="name in itemCodeUpdateStatus.unmatched" :key="name">
+                {{ name }}
+              </li>
+            </ul>
+          </div>
+
+          <div class="dialog-actions">
+            <button class="cancel-btn" @click="closeItemCodeDialog">Cancel</button>
+            <button class="submit-btn" @click="updateItemCodes">Update Item Codes</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -812,6 +934,7 @@ const columns = {
   profitPercentage: { label: 'Profit %', key: 'profitPercentage' },
   profit: { label: 'Profit (HKD)', key: 'profit' },
   createDate: { label: 'Create Date', key: 'createDate' },
+  updateDate: { label: 'Updated At', key: 'updateDate' },
   image: { label: 'Image', key: 'image' },
   keep: { label: 'Keep', key: 'keep' },
   stockTake: { label: 'Stock Take', key: 'stockTake' },
@@ -839,6 +962,7 @@ const visibleColumns = ref<VisibleColumns>({
   profitPercentage: true,
   profit: false,
   createDate: true,
+  updateDate: true,
   image: true,
   keep: true,
   stockTake: true,
@@ -894,10 +1018,14 @@ const filteredData = computed(() => {
     if (!bValue) return -1
     
     let comparison = 0
-    if (sortKey.value === 'createDate') {
-      const aDate = aValue.toDate ? aValue.toDate() : new Date(aValue)
-      const bDate = bValue.toDate ? bValue.toDate() : new Date(bValue)
+    if (sortKey.value === 'createDate' || sortKey.value === 'updateDate') {
+      // Handle both createDate and updateDate as Firestore timestamps
+      const aDate = aValue?.toDate ? aValue.toDate() : new Date(aValue)
+      const bDate = bValue?.toDate ? bValue.toDate() : new Date(bValue)
       comparison = aDate.getTime() - bDate.getTime()
+    } else if (sortKey.value === 'sold') {
+      // Handle sold as a number
+      comparison = (aValue || 0) - (bValue || 0)
     } else {
       comparison = String(aValue).localeCompare(String(bValue))
     }
@@ -1613,7 +1741,8 @@ const exportToExcel = () => {
       'Card Name (CHI)': item.cardNameCHI,
       'In Stock': item.quantity || 0,
       'Selling Price (HKD)': Math.round(item.sellPrice * 0.052),
-      'Created At': formatDate(item.createDate)
+      'Created At': formatDate(item.createDate),
+      'Updated At': formatDate(item.updateDate)
     }))
 
     if (exportData.length === 0) {
@@ -1630,7 +1759,8 @@ const exportToExcel = () => {
       { wch: 30 },  // Card Name (CHI)
       { wch: 10 },  // In Stock
       { wch: 15 },  // Selling Price (HKD)
-      { wch: 20 }   // Created At
+      { wch: 20 },  // Created At
+      { wch: 20 }   // Updated At
     ]
     ws['!cols'] = colWidths
 
@@ -1914,6 +2044,182 @@ const updateSpecial = async (item: CardItem, special: boolean) => {
     alert('Failed to update special status: ' + errorMessage)
   }
 }
+
+// Add new refs and computed properties in the script section
+const showSoldItemsConfirmDialog = ref(false)
+
+// Add new refs for sold items dialog sorting
+const soldItemsSortKey = ref('updateDate')
+const soldItemsSortOrder = ref('desc')
+
+// Update the soldItems computed property to include sorting
+const soldItems = computed(() => {
+  const items = allData.value.filter(item => 
+    item.quantity === 0 && 
+    (item.sold || 0) > 0 &&
+    item.active !== false
+  )
+
+  return items.sort((a, b) => {
+    const aValue = a[soldItemsSortKey.value]
+    const bValue = b[soldItemsSortKey.value]
+    
+    if (!aValue && !bValue) return 0
+    if (!aValue) return 1
+    if (!bValue) return -1
+    
+    let comparison = 0
+    if (soldItemsSortKey.value === 'updateDate' || soldItemsSortKey.value === 'createDate') {
+      // Handle dates
+      const aDate = aValue?.toDate ? aValue.toDate() : new Date(aValue)
+      const bDate = bValue?.toDate ? bValue.toDate() : new Date(bValue)
+      comparison = aDate.getTime() - bDate.getTime()
+    } else if (soldItemsSortKey.value === 'sold') {
+      // Handle sold as a number
+      comparison = (aValue || 0) - (bValue || 0)
+    } else {
+      comparison = String(aValue).localeCompare(String(bValue))
+    }
+    
+    return soldItemsSortOrder.value === 'asc' ? comparison : -comparison
+  })
+})
+
+// Add sort function for sold items dialog
+const sortSoldItems = (key: string) => {
+  if (soldItemsSortKey.value === key) {
+    soldItemsSortOrder.value = soldItemsSortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    soldItemsSortKey.value = key
+    soldItemsSortOrder.value = 'desc'
+  }
+}
+
+// Add computed property for total profit of sold items
+const soldItemsTotalProfit = computed(() => {
+  return soldItems.value.reduce((total, item) => {
+    const buyHKD = item.buyPrice * 0.052
+    const sellHKD = item.sellPrice * 0.052
+    const sold = item.sold || 0
+    return total + ((sellHKD - buyHKD) * sold)
+  }, 0)
+})
+
+// Add functions to handle the dialog
+const showSoldItemsDialog = () => {
+  showSoldItemsConfirmDialog.value = true
+}
+
+const closeSoldItemsDialog = () => {
+  showSoldItemsConfirmDialog.value = false
+}
+
+// Add new refs for item code update dialog
+const showItemCodeDialog = ref(false)
+const itemCodeInput = ref('')
+const itemCodeUpdateStatus = ref<{
+  success: number;
+  failed: number;
+  unmatched: string[];
+}>({
+  success: 0,
+  failed: 0,
+  unmatched: []
+})
+
+// Add new functions for item code update
+const showUpdateItemCodeDialog = () => {
+  showItemCodeDialog.value = true
+  itemCodeInput.value = ''
+  itemCodeUpdateStatus.value = {
+    success: 0,
+    failed: 0,
+    unmatched: []
+  }
+}
+
+const closeItemCodeDialog = () => {
+  showItemCodeDialog.value = false
+  itemCodeInput.value = ''
+  itemCodeUpdateStatus.value = {
+    success: 0,
+    failed: 0,
+    unmatched: []
+  }
+}
+
+const updateItemCodes = async () => {
+  if (!itemCodeInput.value.trim()) {
+    alert('Please paste item code data')
+    return
+  }
+
+  try {
+    const lines = itemCodeInput.value.split('\n')
+    const updates: { [key: string]: string } = {}
+    const unmatched: string[] = []
+    let successCount = 0
+    let failedCount = 0
+
+    // Parse each line
+    for (const line of lines) {
+      const parts = line.split('\t')
+      if (parts.length < 4) continue // Skip invalid lines
+
+      const itemCode = parts[2]?.trim()
+      const cardNameCHI = parts[3]?.trim()
+
+      if (!itemCode || !cardNameCHI) continue
+
+      // Find matching card
+      const matchingCard = allData.value.find(item => 
+        item.cardNameCHI === cardNameCHI && 
+        item.active !== false
+      )
+
+      if (matchingCard) {
+        updates[matchingCard.id] = itemCode
+        successCount++
+      } else {
+        unmatched.push(cardNameCHI)
+        failedCount++
+      }
+    }
+
+    // Update the database
+    const batch = writeBatch(db!)
+    for (const [id, itemCode] of Object.entries(updates)) {
+      const docRef = doc(db!, 'cards', id)
+      batch.update(docRef, {
+        itemCode,
+        updateDate: serverTimestamp()
+      })
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await batch.commit()
+    }
+
+    // Update status
+    itemCodeUpdateStatus.value = {
+      success: successCount,
+      failed: failedCount,
+      unmatched
+    }
+
+    if (unmatched.length > 0) {
+      alert(`Updated ${successCount} items successfully.\nFailed to match ${failedCount} items.`)
+    } else {
+      alert(`Successfully updated ${successCount} items!`)
+      closeItemCodeDialog()
+    }
+  } catch (err: unknown) {
+    console.error('Error updating item codes:', err)
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    alert('Failed to update item codes: ' + errorMessage)
+  }
+}
+
 </script>
 
 <style scoped>
@@ -3013,5 +3319,125 @@ const updateSpecial = async (item: CardItem, special: boolean) => {
 .edit-dialog .dialog-actions {
   margin-top: 2rem; /* Increased margin before actions */
   padding-top: 2rem; /* Increased padding before actions */
+}
+
+/* Add new styles for sold items dialog */
+.sold-items-dialog {
+  width: 95vw;
+  max-width: 1200px;
+  max-height: 90vh;
+}
+
+.sold-items-table-container {
+  max-height: 60vh;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+}
+
+.sold-items-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.sold-items-table th,
+.sold-items-table td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.sold-items-table th {
+  background-color: #f9fafb;
+  font-weight: 600;
+  color: #374151;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.sold-items-table tbody tr:hover {
+  background-color: #f3f4f6;
+}
+
+.sold-items-table tfoot {
+  background-color: #f8fafc;
+  font-weight: 600;
+}
+
+.total-profit-cell {
+  text-align: right;
+  color: #374151;
+}
+
+.total-profit-amount {
+  color: #16a34a;
+  font-weight: 700;
+}
+
+.show-sold-btn {
+  padding: 0.5rem 1.25rem;
+  background-color: #059669;
+  color: white;
+  border: none;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-right: 1rem;
+}
+
+.show-sold-btn:hover {
+  background-color: #047857;
+}
+
+.update-item-code-btn {
+  padding: 0.5rem 1.25rem;
+  background-color: #7c3aed;
+  color: white;
+  border: none;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-right: 1rem;
+}
+
+.update-item-code-btn:hover {
+  background-color: #6d28d9;
+}
+
+.help-text {
+  color: #6b7280;
+  font-size: 0.875rem;
+  margin-bottom: 0.5rem;
+}
+
+.unmatched-list {
+  margin: 1rem 0;
+  padding: 1rem;
+  background-color: #fef2f2;
+  border: 1px solid #fee2e2;
+  border-radius: 6px;
+}
+
+.unmatched-list h4 {
+  color: #991b1b;
+  margin: 0 0 0.5rem 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.unmatched-list ul {
+  margin: 0;
+  padding-left: 1.5rem;
+  color: #991b1b;
+  font-size: 0.875rem;
+}
+
+.unmatched-list li {
+  margin: 0.25rem 0;
 }
 </style> 
