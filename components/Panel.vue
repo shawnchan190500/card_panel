@@ -195,9 +195,9 @@
               <td v-if="visibleColumns.sold">
                 <input 
                   type="number" 
-                  v-model.number="item.sold" 
+                  :value="item.sold || 0"
+                  @input="(e) => updateSold(item, e)"
                   @click.stop
-                  @input="updateSold(item)"
                   class="sold-input"
                   :disabled="item.keep"
                   min="0"
@@ -363,7 +363,7 @@
 
     <!-- Add Edit Dialog -->
     <div v-if="showEditDialog" class="dialog-overlay">
-      <div class="dialog" @click.stop>
+      <div class="dialog edit-dialog" @click.stop>
         <div class="dialog-header">
           <h3>Edit Card</h3>
           <button class="close-btn" @click="closeEditDialog">×</button>
@@ -1075,6 +1075,8 @@ const handleRowClick = (item: CardItem) => {
     sellPriceHKD: Math.round(item.sellPrice * 0.052),
     active: item.active !== false // Default to true if not set
   }
+  // Initialize previous sold value
+  previousSoldValues.value.set(item.id, item.sold || 0)
   showEditDialog.value = true
 }
 
@@ -1256,18 +1258,40 @@ const calculateCost = (buyPrice: number, quantity: number = 1): string => {
   return `HK$ ${Math.round(cost)}`
 }
 
-// Add updateSold function
-const updateSold = async (item: CardItem) => {
+// Add new function to track previous sold value
+const previousSoldValues = ref<Map<string, number>>(new Map());
+
+// Update updateSold function
+const updateSold = async (item: CardItem, event: Event) => {
   try {
-    const docRef = doc(db!, 'cards', item.id)
-    await updateDoc(docRef, {
-      sold: item.sold || 0,
-      updateDate: serverTimestamp()
-    })
+    const target = event.target as HTMLInputElement;
+    const newSoldValue = Number(target.value);
+    const previousSold = previousSoldValues.value.get(item.id) || 0;
+    const currentQuantity = item.quantity || 0;
+
+    // Only update if the value increased (clicked up arrow)
+    if (newSoldValue > previousSold) {
+      const docRef = doc(db!, 'cards', item.id);
+      await updateDoc(docRef, {
+        sold: newSoldValue,
+        quantity: currentQuantity - 1, // Decrease by 1
+        updateDate: serverTimestamp()
+      });
+    } else {
+      // If value decreased or changed directly, only update sold
+      const docRef = doc(db!, 'cards', item.id);
+      await updateDoc(docRef, {
+        sold: newSoldValue,
+        updateDate: serverTimestamp()
+      });
+    }
+
+    // Update the previous value
+    previousSoldValues.value.set(item.id, newSoldValue);
   } catch (err: unknown) {
-    console.error('Error updating sold quantity:', err)
-    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-    alert('Failed to update sold quantity: ' + errorMessage)
+    console.error('Error updating sold quantity:', err);
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    alert('Failed to update sold quantity: ' + errorMessage);
   }
 }
 
@@ -1426,10 +1450,14 @@ const updateSellingPrices = async () => {
     const recordsToUpdate = allData.value.filter(item => {
       const createDate = item.createDate.toDate()
       const buyPriceHKD = Math.round(item.buyPrice * 0.052)
-      // Skip special records
+      const isSoldOut = (item.quantity === 0 && (item.sold || 0) > 0)
+      
+      // Skip records that are kept, special, or sold out
       return createDate >= targetDate && 
              [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(buyPriceHKD) &&
-             !item.special // Add this condition to skip special records
+             !item.keep && // Skip kept items
+             !item.special && // Skip special items
+             !isSoldOut // Skip sold out items
     })
 
     // Update each matching record
@@ -1517,7 +1545,15 @@ const updateSellingPrices = async () => {
       if (updateCounts['11to26'] > 0) message += `\n- ${updateCounts['11to26']} records from $11 to $26`
       if (updateCounts['12to28'] > 0) message += `\n- ${updateCounts['12to28']} records from $12 to $28`
 
-      // Add information about skipped special records
+      // Add information about skipped records
+      const keptRecords = allData.value.filter(item => {
+        const createDate = item.createDate.toDate()
+        const buyPriceHKD = Math.round(item.buyPrice * 0.052)
+        return createDate >= targetDate && 
+               [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(buyPriceHKD) &&
+               item.keep
+      })
+
       const specialRecords = allData.value.filter(item => {
         const createDate = item.createDate.toDate()
         const buyPriceHKD = Math.round(item.buyPrice * 0.052)
@@ -1525,9 +1561,24 @@ const updateSellingPrices = async () => {
                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(buyPriceHKD) &&
                item.special
       })
+
+      const soldOutRecords = allData.value.filter(item => {
+        const createDate = item.createDate.toDate()
+        const buyPriceHKD = Math.round(item.buyPrice * 0.052)
+        const isSoldOut = (item.quantity === 0 && (item.sold || 0) > 0)
+        return createDate >= targetDate && 
+               [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(buyPriceHKD) &&
+               isSoldOut
+      })
       
+      if (keptRecords.length > 0) {
+        message += `\n\nSkipped ${keptRecords.length} kept records.`
+      }
       if (specialRecords.length > 0) {
-        message += `\n\nSkipped ${specialRecords.length} special records.`
+        message += `\nSkipped ${specialRecords.length} special records.`
+      }
+      if (soldOutRecords.length > 0) {
+        message += `\nSkipped ${soldOutRecords.length} sold out records.`
       }
 
       alert(message)
@@ -1550,20 +1601,23 @@ const isPriceOutOfRange = (buyPrice: number): boolean => {
 // Add export function after other functions
 const exportToExcel = () => {
   try {
-    // Filter out items where keep is true
-    const filteredItems = allData.value.filter(item => !item.keep)
+    // Filter out items where keep is true OR quantity is 0
+    const filteredItems = allData.value.filter(item => 
+      !item.keep && // Skip kept items
+      (item.quantity || 0) > 0 // Skip items with 0 quantity
+    )
 
     // Prepare the data for export with only specified columns
     const exportData = filteredItems.map(item => ({
       'Item Code': item.itemCode || '',
       'Card Name (CHI)': item.cardNameCHI,
-      'In Stock': item.quantity || 1,
+      'In Stock': item.quantity || 0,
       'Selling Price (HKD)': Math.round(item.sellPrice * 0.052),
       'Created At': formatDate(item.createDate)
     }))
 
     if (exportData.length === 0) {
-      alert('No data to export (all items are marked as keep)')
+      alert('No data to export (all items are either kept or out of stock)')
       return
     }
 
@@ -2921,5 +2975,43 @@ const updateSpecial = async (item: CardItem, special: boolean) => {
 
 .duplicate-table tr:hover {
   background-color: #f3f4f6;
+}
+
+/* Add specific styles for edit dialog */
+.edit-dialog {
+  width: 95vw;
+  max-width: 1200px;
+  max-height: 90vh;
+}
+
+.edit-dialog .dialog-content {
+  padding: 2.5rem 4rem; /* Increased horizontal padding from 2.5rem to 4rem */
+}
+
+.edit-dialog .dialog-header {
+  padding: 1.5rem 4rem; /* Increased horizontal padding from 2.5rem to 4rem */
+}
+
+.edit-dialog .form-group {
+  margin-bottom: 2rem; /* Increased spacing between form groups */
+}
+
+.edit-dialog .form-input {
+  padding: 0.75rem; /* Increased input padding */
+  font-size: 1rem; /* Increased font size */
+}
+
+.edit-dialog .form-group label {
+  font-size: 1rem; /* Increased label font size */
+  margin-bottom: 1rem; /* Increased label margin */
+}
+
+.edit-dialog .dialog-header h3 {
+  font-size: 1.5rem; /* Increased header font size */
+}
+
+.edit-dialog .dialog-actions {
+  margin-top: 2rem; /* Increased margin before actions */
+  padding-top: 2rem; /* Increased padding before actions */
 }
 </style> 
