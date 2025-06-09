@@ -1004,7 +1004,8 @@ const filteredData = computed(() => {
     const query = props.searchQuery.toLowerCase().trim()
     data = data.filter(item => 
       item.cardNameJP.toLowerCase().includes(query) ||
-      item.cardNameCHI.toLowerCase().includes(query)
+      item.cardNameCHI.toLowerCase().includes(query) ||
+      (item.itemCode && item.itemCode.toLowerCase().includes(query))
     )
   }
   
@@ -1110,11 +1111,13 @@ const parseAndAddCards = async () => {
         console.log('Card name:', currentCard.cardNameJP)
       } else if (line === '數量') {
         const quantity = parseInt(lines[i + 1].trim())
-        currentCard.quantity = isNaN(quantity) ? 0 : quantity  // Change default from 1 to 0
+        currentCard.quantity = isNaN(quantity) ? 0 : quantity
         console.log('Quantity:', currentCard.quantity)
       } else if (line === '單件售價 (JPY)') {
         const priceText = lines[i + 1].trim()
-        const buyPrice = parseInt(priceText.replace('JP¥', '').trim())
+        // Remove JP¥ and any commas from the price text
+        const cleanPrice = priceText.replace('JP¥', '').replace(/,/g, '').trim()
+        const buyPrice = parseInt(cleanPrice)
         
         if (isNaN(buyPrice)) {
           throw new Error('Invalid price format')
